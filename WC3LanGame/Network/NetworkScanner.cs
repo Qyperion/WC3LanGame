@@ -36,8 +36,8 @@ namespace WC3LanGame.Network
         public static async Task<List<string>> ScanNetwork(UnicastIPAddressInformation ipAddress)
         {
             string network = ipAddress.Address + "/" + ipAddress.PrefixLength;
-            IPNetwork ipNetwork = IPNetwork.Parse(network);
-            string[] networkClientAddresses = ipNetwork.ListIPAddress(FilterEnum.Usable)
+            var ipNetwork = IPNetwork2.Parse(network);
+            string[] networkClientAddresses = ipNetwork.ListIPAddress(Filter.Usable)
                 .Select(ip => ip.ToString()).ToArray();
 
             List<string> activeClients = new List<string>();
@@ -76,8 +76,8 @@ namespace WC3LanGame.Network
             foreach (var localIp in localIpList)
             {
                 string network = localIp.Address + "/" + localIp.PrefixLength;
-                IPNetwork ipNetwork = IPNetwork.Parse(network);
-                var networkClientAddresses = ipNetwork.ListIPAddress(FilterEnum.Usable)
+                var ipNetwork = IPNetwork2.Parse(network);
+                var networkClientAddresses = ipNetwork.ListIPAddress(Filter.Usable)
                     .Select(ip => ip.ToString());
                 allNetworksClientAddresses.AddRange(networkClientAddresses);
             }
