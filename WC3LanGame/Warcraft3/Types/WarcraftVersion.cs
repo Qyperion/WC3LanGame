@@ -1,5 +1,4 @@
 ﻿using System.ComponentModel;
-using WC3LanGame.Extensions;
 
 namespace WC3LanGame.Warcraft3.Types
 {
@@ -14,20 +13,5 @@ namespace WC3LanGame.Warcraft3.Types
         [Description("1.27")] V1_27 = 0x1B,
         [Description("1.28")] V1_28 = 0x1C,
         [Description("1.29")] V1_29 = 0x1D,
-    }
-
-    internal class WarcraftVersionWrapper
-    {
-        public WarcraftVersion Version { get; }
-
-        public WarcraftVersionWrapper(WarcraftVersion version)
-        {
-            Version = version;
-        }
-
-        public override string ToString()
-        {
-            return Version.Version();
-        }
     }
 }

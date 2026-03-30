@@ -1,28 +1,21 @@
-﻿using System.Net;
-using System.Net.Sockets;
+﻿using System.Net.Sockets;
 using System.Timers;
+
+using WC3LanGame.Extensions;
 using WC3LanGame.Network;
 using WC3LanGame.Warcraft3;
 using WC3LanGame.Warcraft3.Types;
+
 using Timer = System.Timers.Timer;
 
 namespace WC3LanGame
 {
     public partial class MainForm : Form
     {
-        private Listener _listener; // This waits for proxy connections
-        private Browser _browser; // This sends game info queries to the server and forwards the responses to the client
-        private readonly List<TcpProxy> _proxies = new(); // A collection of game proxies.  Usually we would only need 1 proxy.
-        
-        private HostInfo _hostInfo;
-        private IPAddress _serverAddress;
-        private IPEndPoint _serverEP;
+        private ProxyService _proxyService;
+        private CancellationTokenSource _scanCts;
 
-        private readonly Timer _updateWC3RunningStatusTimer = new(1000);
-        
-        private bool _foundGame;
-        private DateTime _lastFoundServer;
-        private GameInfo _gameInfo;
+        private readonly Timer _updateWC3RunningStatusTimer = new(3000);
 
 
         public MainForm()
@@ -34,22 +27,27 @@ namespace WC3LanGame
         #region Controls
         private void InitSettingsComponent()
         {
-            foreach (WarcraftVersion version in (WarcraftVersion[]) Enum.GetValues(typeof(WarcraftVersion)))
+            wc3VersionComboBox.Format += (_, e) =>
             {
-                wc3VersionComboBox.Items.Add(new WarcraftVersionWrapper(version));
-            }
-            
+                if (e.ListItem is WarcraftVersion v)
+                    e.Value = v.Version();
+            };
+
+            foreach (WarcraftVersion version in Enum.GetValues<WarcraftVersion>())
+                wc3VersionComboBox.Items.Add(version);
+
             string installedVersion = WarcraftExecutable.GetInstalledWC3Version();
-            var item = wc3VersionComboBox.Items.Cast<WarcraftVersionWrapper>()
-                .FirstOrDefault(x => x.ToString() == installedVersion);
-
-            if (item != null)
-                wc3VersionComboBox.SelectedItem = item;
-
-            foreach (WarcraftType gameType in (WarcraftType[]) Enum.GetValues(typeof(WarcraftType)))
+            foreach (WarcraftVersion version in Enum.GetValues<WarcraftVersion>())
             {
-                gameTypeComboBox.Items.Add(gameType);
+                if (version.Version() == installedVersion)
+                {
+                    wc3VersionComboBox.SelectedItem = version;
+                    break;
+                }
             }
+
+            foreach (WarcraftType gameType in Enum.GetValues<WarcraftType>())
+                gameTypeComboBox.Items.Add(gameType);
 
             gameTypeComboBox.SelectedIndex = gameTypeComboBox.Items.Count - 1;
 
@@ -65,39 +63,44 @@ namespace WC3LanGame
                 ? "WC3 is running"
                 : "WC3 isn't running";
 
-            if (wc3ProcessRunningStatusLabel.InvokeRequired)
-                wc3ProcessRunningStatusLabel.Invoke(() => wc3ProcessRunningStatusLabel.Text = wc3ProcessRunningStatus);
-            else
+            if (!IsHandleCreated)
+            {
                 wc3ProcessRunningStatusLabel.Text = wc3ProcessRunningStatus;
-
-            if (runWC3Button.InvokeRequired)
-                runWC3Button.Invoke(() => runWC3Button.Visible = !wc3Running);
-            else
                 runWC3Button.Visible = !wc3Running;
-
-            if (stopWC3Button.InvokeRequired)
-                stopWC3Button.Invoke(() => stopWC3Button.Visible = wc3Running);
-            else
                 stopWC3Button.Visible = wc3Running;
+                return;
+            }
+
+            BeginInvoke(() =>
+            {
+                wc3ProcessRunningStatusLabel.Text = wc3ProcessRunningStatus;
+                runWC3Button.Visible = !wc3Running;
+                stopWC3Button.Visible = wc3Running;
+            });
         }
 
         private void runProxyButton_Click(object sender, EventArgs e)
         {
-            WarcraftVersionWrapper version = (WarcraftVersionWrapper) wc3VersionComboBox.SelectedItem;
-            WarcraftType gameType = (WarcraftType) gameTypeComboBox.SelectedItem;
-            _hostInfo = new HostInfo
+            if (wc3VersionComboBox.SelectedItem is not WarcraftVersion version)
+                return;
+
+            WarcraftType gameType = (WarcraftType)gameTypeComboBox.SelectedItem;
+            HostInfo hostInfo = new HostInfo
             {
                 Hostname = hostAddressComboBox.Text,
-                Version = version.Version,
+                Version = version,
                 GameType = gameType,
             };
 
-            RunProxy();
+            RunProxy(hostInfo);
         }
 
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
         {
+            _scanCts?.Cancel();
             StopProxy();
+            _updateWC3RunningStatusTimer.Stop();
+            _updateWC3RunningStatusTimer.Dispose();
         }
 
         private void notifyIcon_MouseDoubleClick(object sender, MouseEventArgs e)
@@ -118,7 +121,7 @@ namespace WC3LanGame
 
         private void runWC3Button_Click(object sender, EventArgs e)
         {
-            string message = WarcraftExecutable.RunWC3((WarcraftType) gameTypeComboBox.SelectedItem);
+            string message = WarcraftExecutable.RunWC3((WarcraftType)gameTypeComboBox.SelectedItem);
             Notify(message);
         }
 
@@ -130,8 +133,17 @@ namespace WC3LanGame
 
         private async void MainForm_Load(object sender, EventArgs e)
         {
-            var ipList = await NetworkScanner.FindAllActiveIpInAllLocalNetworks(scanningNetworkProgressBar);
-            hostAddressComboBox.Items.AddRange(ipList);
+            _scanCts = new CancellationTokenSource();
+            try
+            {
+                var ipList = await NetworkScanner.FindAllActiveIpInAllLocalNetworks(
+                    scanningNetworkProgressBar, _scanCts.Token);
+                hostAddressComboBox.Items.AddRange(ipList);
+            }
+            catch (OperationCanceledException)
+            {
+                // Form closing during scan — ignore
+            }
             scanningNetworkLabel.Visible = false;
         }
 
@@ -145,151 +157,48 @@ namespace WC3LanGame
 
         #region Logic
 
-        private void ResetGameInfo()
+        private void RunProxy(HostInfo hostInfo)
         {
-            Notify("Lost game");
+            _proxyService = new ProxyService();
+            _proxyService.GameFound += ProxyService_GameFound;
+            _proxyService.GameLost += ProxyService_GameLost;
+            _proxyService.Notification += ProxyService_Notification;
+            _proxyService.ConnectionCountChanged += ProxyService_ConnectionCountChanged;
 
-            gameNameValueLabel.Text = "-";
-            gamePortValueLabel.Text = "-";
-            gameTypeValueLabel.Text = "-";
-            mapNameValueLabel.Text = "-";
-            mapSizeValueLabel.Text = "-";
-            playersCountValueLabel.Text = "-";
-            clientCountValueLabel.Text = "-";
-            proxyActiveLabel.Visible = false;
-
-            _serverEP.Port = 0;
-            _foundGame = false;
-        }
-
-        private void DisplayGameInfo()
-        {
-            if (InvokeRequired)
-            {
-                Invoke(DisplayGameInfo);
-                return;
-            }
-
-            if (!_foundGame) 
-                Notify("Found game: " + _gameInfo.Name);
-
-            gamePortValueLabel.Text = _gameInfo.Port.ToString();
-            gameNameValueLabel.Text = _gameInfo.Name;
-            gameTypeValueLabel.Text = _gameInfo.GameType.ToString();
-            mapNameValueLabel.Text = _gameInfo.MapName;
-            mapSizeValueLabel.Text = $"{_gameInfo.MapSizeCategory} ({_gameInfo.MapHeight} x {_gameInfo.MapWidth})";
-            playersCountValueLabel.Text = $"{_gameInfo.CurrentPlayersCount} / {_gameInfo.PlayerSlotsCount} / {_gameInfo.SlotsCount}";
-            proxyActiveLabel.Visible = true;
-
-            _serverEP.Port = _gameInfo.Port;
-        }
-
-        private void StartBrowser()
-        {
-            _browser = new Browser(_serverAddress, _listener.LocalEndPoint.Port, _hostInfo);
-            _browser.QuerySent += Browser_QuerySent;
-            _browser.FoundServer += Browser_FoundServer;
-            _browser.Run();
-        }
-
-        private void Browser_FoundServer(GameInfo gameInfo)
-        {
-            _gameInfo = gameInfo;
-            DisplayGameInfo();
-
-            _foundGame = true;
-            _lastFoundServer = DateTime.Now;
-        }
-
-        private void Browser_QuerySent()
-        {
-            // We don't receive the "server cancelled" messages
-            // because they are only ever broadcast to the host's LAN.
-            if (!_foundGame) 
-                return;
-
-            TimeSpan interval = DateTime.Now - _lastFoundServer;
-            if (interval.TotalSeconds > 3)
-                OnLostGame();
-        }
-
-        private void OnLostGame()
-        {
-            _browser?.SendGameCancelled((byte)_gameInfo.GameId);
-
-            if (_foundGame)
-                Invoke(ResetGameInfo);
-        }
-
-        private void StartTcpProxy()
-        {
-            _listener = new Listener(GotConnection);
             try
             {
-                _listener.Run();
+                _proxyService.Start(hostInfo);
             }
             catch (SocketException ex)
             {
+                _proxyService.Dispose();
+                _proxyService = null;
                 MessageBox.Show("Unable to start listener\n" + ex.Message);
+                return;
             }
-        }
-
-        private void GotConnection(Socket clientSocket)
-        {
-            string message = $"Got a connection from {clientSocket.RemoteEndPoint}";
-            Notify(message);
-
-            TcpProxy proxy = new TcpProxy(clientSocket, _serverEP);
-            proxy.ProxyDisconnected += ProxyDisconnected;
-            lock (_proxies) _proxies.Add(proxy);
-
-            proxy.Run();
-
-            UpdateClientCount();
-        }
-
-        private void UpdateClientCount()
-        {
-            if (InvokeRequired)
+            catch (InvalidOperationException ex)
             {
-                Invoke(UpdateClientCount);
+                _proxyService.Dispose();
+                _proxyService = null;
+                MessageBox.Show(ex.Message);
                 return;
             }
 
-            lock (_proxies)
-            {
-                clientCountValueLabel.Text = _proxies.Count.ToString();
-            }
-        }
+            string description = _proxyService.ServerAddress.ToString() == hostInfo.Hostname
+                ? hostInfo.Hostname
+                : $"{hostInfo.Hostname} ({_proxyService.ServerAddress})";
 
-        private void ProxyDisconnected(TcpProxy proxy)
-        {
-            Notify("Client disconnected");
+            hostAddressValueLabel.Text = description;
 
-            lock (_proxies)
-                if (_proxies.Contains(proxy)) _proxies.Remove(proxy);
-
-            UpdateClientCount();
+            runProxyButton.Visible = false;
+            stopProxyButton.Visible = true;
+            gameInfoTableLayoutPanel.Visible = true;
         }
 
         private void StopProxy()
         {
-            if (_listener != null)
-            {
-                _listener.Stop();
-                lock (_proxies) 
-                {
-                    foreach (TcpProxy p in _proxies)
-                        p.Stop();
-
-                    _proxies.Clear();
-                }
-            }
-
-            if (_foundGame) 
-                _browser?.SendGameCancelled((byte)_gameInfo.GameId);
-
-            _browser?.Stop();
+            _proxyService?.Dispose();
+            _proxyService = null;
 
             runProxyButton.Visible = true;
             stopProxyButton.Visible = false;
@@ -297,25 +206,46 @@ namespace WC3LanGame
             proxyActiveLabel.Visible = false;
         }
 
-        private void RunProxy()
+        private void ProxyService_GameFound(GameInfo gameInfo)
         {
-            _serverAddress = NetworkScanner.ResolveHost(_hostInfo.Hostname);
-            _serverEP = new IPEndPoint(_serverAddress, 0);
+            BeginInvoke(() =>
+            {
+                gamePortValueLabel.Text = gameInfo.Port.ToString();
+                gameNameValueLabel.Text = gameInfo.Name;
+                gameTypeValueLabel.Text = gameInfo.GameType.ToString();
+                mapNameValueLabel.Text = gameInfo.MapName;
+                mapSizeValueLabel.Text = $"{gameInfo.MapSizeCategory} ({gameInfo.MapHeight} x {gameInfo.MapWidth})";
+                playersCountValueLabel.Text = $"{gameInfo.CurrentPlayersCount} / {gameInfo.PlayerSlotsCount} / {gameInfo.SlotsCount}";
+                proxyActiveLabel.Visible = true;
+            });
+        }
 
-            string description = _serverAddress.ToString() == _hostInfo.Hostname
-                ? _hostInfo.Hostname
-                : $"{_hostInfo.Hostname} ({_serverAddress})";
+        private void ProxyService_GameLost()
+        {
+            BeginInvoke(() =>
+            {
+                gameNameValueLabel.Text = "-";
+                gamePortValueLabel.Text = "-";
+                gameTypeValueLabel.Text = "-";
+                mapNameValueLabel.Text = "-";
+                mapSizeValueLabel.Text = "-";
+                playersCountValueLabel.Text = "-";
+                clientCountValueLabel.Text = "-";
+                proxyActiveLabel.Visible = false;
+            });
+        }
 
-            hostAddressValueLabel.Text = description;
+        private void ProxyService_Notification(string text)
+        {
+            BeginInvoke(() => Notify(text));
+        }
 
-            StartTcpProxy();
-            StartBrowser();
-
-            _browser?.SetConfiguration(_serverAddress, _hostInfo);
-
-            runProxyButton.Visible = false;
-            stopProxyButton.Visible = true;
-            gameInfoTableLayoutPanel.Visible = true;
+        private void ProxyService_ConnectionCountChanged()
+        {
+            BeginInvoke(() =>
+            {
+                clientCountValueLabel.Text = (_proxyService?.ConnectionCount ?? 0).ToString();
+            });
         }
 
         #endregion
