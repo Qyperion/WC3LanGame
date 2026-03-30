@@ -5,6 +5,6 @@
         public string Hostname { get; init; }
         public WarcraftVersion Version { get; init; }
 
-        public WarcraftType  GameType { get; init; }
+        public WarcraftType GameType { get; init; }
     }
 }

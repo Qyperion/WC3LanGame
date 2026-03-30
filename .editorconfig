@@ -1,0 +1,39 @@
+# Project files
+[*.{csproj,props}]
+indent_style = space
+indent_size = 2
+
+# C# files
+[*.cs]
+
+#### Core EditorConfig Options ####
+
+# Indentation and spacing
+indent_size = 4
+indent_style = space
+tab_width = 4
+
+# New line preferences
+end_of_line = crlf
+insert_final_newline = true
+
+#Encoding
+charset = utf-8-bom
+
+#### .NET Coding Conventions ####
+
+# Organize usings
+dotnet_separate_import_directive_groups = true
+dotnet_sort_system_directives_first = false
+
+# Namespace match folder
+dotnet_style_namespace_match_folder = true
+dotnet_diagnostic.IDE0130.severity = error
+
+# Use argumnet exception throw helpers
+dotnet_diagnostic.CA1510.severity = warning
+dotnet_diagnostic.CA1511.severity = warning
+dotnet_diagnostic.CA1512.severity = warning
+dotnet_diagnostic.IDE0290.severity = none
+
+csharp_style_namespace_declarations = block_scoped:warning

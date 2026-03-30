@@ -1,5 +1,7 @@
-﻿using System.Diagnostics;
-using Microsoft.Win32;
+﻿using Microsoft.Win32;
+
+using System.Diagnostics;
+
 using WC3LanGame.Warcraft3.Types;
 
 namespace WC3LanGame.Warcraft3
@@ -37,14 +39,14 @@ namespace WC3LanGame.Warcraft3
             if (!File.Exists(program))
                 return "";
 
-            FileVersionInfo versionInfo = FileVersionInfo.GetVersionInfo(program); 
+            FileVersionInfo versionInfo = FileVersionInfo.GetVersionInfo(program);
             return $"{versionInfo.FileMajorPart}.{versionInfo.FileMinorPart}";
         }
 
         public static bool IsWC3ProcessRunning()
         {
             Process[] processes = Process.GetProcessesByName(Warcraft3ProcessName);
-            return  processes.Length > 0;
+            return processes.Length > 0;
         }
 
         public static string StopWC3ProcessRunning()

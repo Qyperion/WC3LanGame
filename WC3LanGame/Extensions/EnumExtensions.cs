@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel;
 using System.Reflection;
+
 using WC3LanGame.Warcraft3.Types;
 
 namespace WC3LanGame.Extensions
@@ -11,7 +12,7 @@ namespace WC3LanGame.Extensions
             Type type = value.GetType();
             MemberInfo[] memberInfo = type.GetMember(value.ToString());
             var attributes = memberInfo[0].GetCustomAttributes(typeof(T), false);
-            
+
             return attributes.Length > 0
                 ? (T)attributes[0]
                 : null;
