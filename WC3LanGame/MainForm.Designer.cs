@@ -412,13 +412,40 @@
             this.proxyActiveLabel.Text = "Proxy is active!";
             this.proxyActiveLabel.Visible = false;
             // 
+            // logTitleLabel
+            // 
+            this.logTitleLabel = new System.Windows.Forms.Label();
+            this.logTitleLabel.AutoSize = true;
+            this.logTitleLabel.Font = new System.Drawing.Font("Segoe UI", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point);
+            this.logTitleLabel.Location = new System.Drawing.Point(12, 305);
+            this.logTitleLabel.Name = "logTitleLabel";
+            this.logTitleLabel.Size = new System.Drawing.Size(35, 19);
+            this.logTitleLabel.TabIndex = 18;
+            this.logTitleLabel.Text = "Log:";
+            // 
+            // logRichTextBox
+            // 
+            this.logRichTextBox = new System.Windows.Forms.RichTextBox();
+            this.logRichTextBox.BackColor = System.Drawing.Color.FromArgb(30, 30, 30);
+            this.logRichTextBox.ForeColor = System.Drawing.Color.FromArgb(220, 220, 220);
+            this.logRichTextBox.Font = new System.Drawing.Font("Consolas", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point);
+            this.logRichTextBox.Location = new System.Drawing.Point(12, 327);
+            this.logRichTextBox.Name = "logRichTextBox";
+            this.logRichTextBox.ReadOnly = true;
+            this.logRichTextBox.ScrollBars = System.Windows.Forms.RichTextBoxScrollBars.Vertical;
+            this.logRichTextBox.Size = new System.Drawing.Size(600, 120);
+            this.logRichTextBox.TabIndex = 19;
+            this.logRichTextBox.Text = "";
+            // 
             // MainForm
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.BackgroundImage = global::WC3LanGame.Properties.Resources.WarcraftBackgroundImage;
             this.BackgroundImageLayout = System.Windows.Forms.ImageLayout.Stretch;
-            this.ClientSize = new System.Drawing.Size(624, 321);
+            this.ClientSize = new System.Drawing.Size(624, 460);
+            this.Controls.Add(this.logRichTextBox);
+            this.Controls.Add(this.logTitleLabel);
             this.Controls.Add(this.proxyActiveLabel);
             this.Controls.Add(this.stopWC3Button);
             this.Controls.Add(this.scanningNetworkLabel);
@@ -482,5 +509,7 @@
         private Label gameTypeValueLabel;
         private Label gameTypeTitleLabel;
         private Label proxyActiveLabel;
+        private Label logTitleLabel;
+        private RichTextBox logRichTextBox;
     }
 }

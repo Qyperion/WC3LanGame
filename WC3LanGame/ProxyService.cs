@@ -13,6 +13,7 @@ namespace WC3LanGame
         private readonly List<TcpProxy> _proxies = [];
 
         private CancellationTokenSource _cts;
+        private readonly Lock _serverEndPointLock = new();
         private IPEndPoint _serverEndPoint;
         private bool _foundGame;
         private DateTime _lastFoundServer;
@@ -77,6 +78,13 @@ namespace WC3LanGame
                 catch (ObjectDisposedException) { }
             }
 
+            // Unsubscribe events before disposing browser
+            if (_browser != null)
+            {
+                _browser.FoundServer -= OnFoundServer;
+                _browser.QuerySent -= OnQuerySent;
+            }
+
             _browser?.Dispose();
 
             _listener = null;
@@ -91,7 +99,10 @@ namespace WC3LanGame
         private void OnFoundServer(GameInfo gameInfo)
         {
             CurrentGame = gameInfo;
-            _serverEndPoint.Port = gameInfo.Port;
+            lock (_serverEndPointLock)
+            {
+                _serverEndPoint.Port = gameInfo.Port;
+            }
 
             if (!_foundGame)
                 Notification?.Invoke("Found game: " + gameInfo.Name);
@@ -133,11 +144,30 @@ namespace WC3LanGame
         {
             Notification?.Invoke($"Got a connection from {clientSocket.RemoteEndPoint}");
 
-            TcpProxy proxy = new TcpProxy(clientSocket, _serverEndPoint, _cts?.Token ?? CancellationToken.None);
+            EndPoint serverEPSnapshot;
+            lock (_serverEndPointLock)
+            {
+                // Snapshot the current server endpoint for this connection
+                serverEPSnapshot = new IPEndPoint(
+                    ((IPEndPoint)_serverEndPoint).Address,
+                    ((IPEndPoint)_serverEndPoint).Port);
+            }
+
+            TcpProxy proxy = new TcpProxy(clientSocket, serverEPSnapshot, _cts?.Token ?? CancellationToken.None);
             proxy.ProxyDisconnected += ProxyDisconnected;
             lock (_proxies) _proxies.Add(proxy);
 
-            proxy.Run();
+            try
+            {
+                proxy.Run();
+            }
+            catch (SocketException)
+            {
+                // Server unreachable — clean up this proxy
+                Notification?.Invoke("Failed to connect to game server");
+                lock (_proxies) _proxies.Remove(proxy);
+                proxy.Dispose();
+            }
 
             ConnectionCountChanged?.Invoke();
         }

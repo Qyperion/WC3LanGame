@@ -14,6 +14,7 @@ namespace WC3LanGame
     {
         private ProxyService _proxyService;
         private CancellationTokenSource _scanCts;
+        private readonly AppSettings _settings;
 
         private readonly Timer _updateWC3RunningStatusTimer = new(3000);
 
@@ -21,6 +22,7 @@ namespace WC3LanGame
         public MainForm()
         {
             InitializeComponent();
+            _settings = AppSettings.Load();
             InitSettingsComponent();
         }
 
@@ -36,20 +38,36 @@ namespace WC3LanGame
             foreach (WarcraftVersion version in Enum.GetValues<WarcraftVersion>())
                 wc3VersionComboBox.Items.Add(version);
 
-            string installedVersion = WarcraftExecutable.GetInstalledWC3Version();
-            foreach (WarcraftVersion version in Enum.GetValues<WarcraftVersion>())
+            // Restore saved version, fall back to auto-detected from registry
+            if (_settings.Version is WarcraftVersion savedVersion)
             {
-                if (version.Version() == installedVersion)
+                wc3VersionComboBox.SelectedItem = savedVersion;
+            }
+            else
+            {
+                string installedVersion = WarcraftExecutable.GetInstalledWC3Version();
+                foreach (WarcraftVersion version in Enum.GetValues<WarcraftVersion>())
                 {
-                    wc3VersionComboBox.SelectedItem = version;
-                    break;
+                    if (version.Version() == installedVersion)
+                    {
+                        wc3VersionComboBox.SelectedItem = version;
+                        break;
+                    }
                 }
             }
 
             foreach (WarcraftType gameType in Enum.GetValues<WarcraftType>())
                 gameTypeComboBox.Items.Add(gameType);
 
-            gameTypeComboBox.SelectedIndex = gameTypeComboBox.Items.Count - 1;
+            // Restore saved game type, fall back to last item (TheFrozenThrone)
+            if (_settings.GameType is WarcraftType savedGameType)
+                gameTypeComboBox.SelectedItem = savedGameType;
+            else
+                gameTypeComboBox.SelectedIndex = gameTypeComboBox.Items.Count - 1;
+
+            // Restore saved host address
+            if (!string.IsNullOrWhiteSpace(_settings.HostAddress))
+                hostAddressComboBox.Text = _settings.HostAddress;
 
             UpdateWC3RunningStatus(null, null);
             _updateWC3RunningStatusTimer.Elapsed += UpdateWC3RunningStatus;
@@ -85,18 +103,18 @@ namespace WC3LanGame
                 return;
 
             WarcraftType gameType = (WarcraftType)gameTypeComboBox.SelectedItem;
-            HostInfo hostInfo = new HostInfo
-            {
-                Hostname = hostAddressComboBox.Text,
-                Version = version,
-                GameType = gameType,
-            };
+            HostInfo hostInfo = new HostInfo(hostAddressComboBox.Text, version, gameType);
 
             RunProxy(hostInfo);
         }
 
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
         {
+            _settings.HostAddress = hostAddressComboBox.Text;
+            _settings.Version = wc3VersionComboBox.SelectedItem as WarcraftVersion?;
+            _settings.GameType = gameTypeComboBox.SelectedItem as WarcraftType?;
+            _settings.Save();
+
             _scanCts?.Cancel();
             StopProxy();
             _updateWC3RunningStatusTimer.Stop();
@@ -114,6 +132,33 @@ namespace WC3LanGame
             notifyIcon.ShowBalloonTip(1000, "WC3 Proxy", text, ToolTipIcon.Info);
         }
 
+        private void Log(string message)
+        {
+            string timestamp = DateTime.Now.ToString("HH:mm:ss");
+            string line = $"[{timestamp}] {message}{Environment.NewLine}";
+
+            if (InvokeRequired)
+            {
+                BeginInvoke(() => AppendLog(line));
+                return;
+            }
+
+            AppendLog(line);
+        }
+
+        private void AppendLog(string line)
+        {
+            // Keep log from growing too large (max ~500 lines)
+            if (logRichTextBox.Lines.Length > 500)
+            {
+                logRichTextBox.SelectAll();
+                logRichTextBox.SelectedText = "";
+            }
+
+            logRichTextBox.AppendText(line);
+            logRichTextBox.ScrollToCaret();
+        }
+
         private void stopProxyButton_Click(object sender, EventArgs e)
         {
             StopProxy();
@@ -122,28 +167,40 @@ namespace WC3LanGame
         private void runWC3Button_Click(object sender, EventArgs e)
         {
             string message = WarcraftExecutable.RunWC3((WarcraftType)gameTypeComboBox.SelectedItem);
+            Log(message);
             Notify(message);
         }
 
         private void stopWC3Button_Click(object sender, EventArgs e)
         {
             string result = WarcraftExecutable.StopWC3ProcessRunning();
+            Log(result);
             Notify(result);
         }
 
         private async void MainForm_Load(object sender, EventArgs e)
         {
             _scanCts = new CancellationTokenSource();
+
+            scanningNetworkProgressBar.Minimum = 0;
+            scanningNetworkProgressBar.Maximum = 1000;
+            var progress = new Progress<double>(fraction =>
+            {
+                scanningNetworkProgressBar.Value = (int)(fraction * 1000);
+            });
+
             try
             {
                 var ipList = await NetworkScanner.FindAllActiveIpInAllLocalNetworks(
-                    scanningNetworkProgressBar, _scanCts.Token);
+                    progress, _scanCts.Token);
                 hostAddressComboBox.Items.AddRange(ipList);
+                Log($"Network scan complete, found {ipList.Length} active hosts");
             }
             catch (OperationCanceledException)
             {
                 // Form closing during scan — ignore
             }
+            scanningNetworkProgressBar.Visible = false;
             scanningNetworkLabel.Visible = false;
         }
 
@@ -173,6 +230,7 @@ namespace WC3LanGame
             {
                 _proxyService.Dispose();
                 _proxyService = null;
+                Log($"Unable to start listener: {ex.Message}");
                 MessageBox.Show("Unable to start listener\n" + ex.Message);
                 return;
             }
@@ -180,6 +238,7 @@ namespace WC3LanGame
             {
                 _proxyService.Dispose();
                 _proxyService = null;
+                Log($"Error: {ex.Message}");
                 MessageBox.Show(ex.Message);
                 return;
             }
@@ -189,6 +248,7 @@ namespace WC3LanGame
                 : $"{hostInfo.Hostname} ({_proxyService.ServerAddress})";
 
             hostAddressValueLabel.Text = description;
+            Log($"Proxy started, connecting to {description}");
 
             runProxyButton.Visible = false;
             stopProxyButton.Visible = true;
@@ -199,6 +259,8 @@ namespace WC3LanGame
         {
             _proxyService?.Dispose();
             _proxyService = null;
+
+            Log("Proxy stopped");
 
             runProxyButton.Visible = true;
             stopProxyButton.Visible = false;
@@ -237,6 +299,7 @@ namespace WC3LanGame
 
         private void ProxyService_Notification(string text)
         {
+            Log(text);
             BeginInvoke(() => Notify(text));
         }
 

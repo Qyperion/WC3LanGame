@@ -26,6 +26,9 @@ namespace WC3LanGame.Warcraft3
         private const ushort QueryForLanGamePacketLength = 16;
         private const ushort GamePlayersChangedPacketLength = 16;
 
+        // Minimum GameInfo reply: 20 (fixed header) + 2 (name null + encoded null) + 22 (fixed footer)
+        private const int MinGameInfoReplyLength = 44;
+
         // Cached reversed game type identifiers (WC3 protocol stores them in reverse byte order)
         private static readonly byte[] TheFrozenThroneId = "PX3W"u8.ToArray(); // "W3XP" reversed
         private static readonly byte[] ReignOfChaosId = "3RAW"u8.ToArray();    // "WAR3" reversed
@@ -73,26 +76,37 @@ namespace WC3LanGame.Warcraft3
             return packet;
         }
 
-        public static GameInfo ParseGameInfoPacket(byte[] replyPacket)
+        public static GameInfo ParseGameInfoPacket(ReadOnlySpan<byte> replyPacket)
         {
+            // Validate minimum size before accessing any indices
+            if (replyPacket.Length < MinGameInfoReplyLength)
+                return null;
+
             // Check that it is correct Warcraft packet header
             if (replyPacket[0] != FirstHeaderByte || replyPacket[1] != GameInfoReplyOPCode)
                 return null;
 
-            ReadOnlySpan<byte> span = replyPacket;
+            WarcraftType? gameType = ParseGameType(replyPacket[4..8]);
+            if (gameType == null)
+                return null;
 
-            WarcraftType gameType = ParseGameType(span[4..8]);
+            uint gameId = BinaryPrimitives.ReadUInt32LittleEndian(replyPacket[12..]);
+            uint slotsCount = BinaryPrimitives.ReadUInt32LittleEndian(replyPacket[^22..]);
+            uint currentPlayersCount = BinaryPrimitives.ReadUInt32LittleEndian(replyPacket[^14..]);
+            uint playerSlotsCount = BinaryPrimitives.ReadUInt32LittleEndian(replyPacket[^10..]);
+            ushort port = BinaryPrimitives.ReadUInt16LittleEndian(replyPacket[^2..]);
 
-            uint gameId = BinaryPrimitives.ReadUInt32LittleEndian(span[12..]);
-            uint slotsCount = BinaryPrimitives.ReadUInt32LittleEndian(span[^22..]);
-            uint currentPlayersCount = BinaryPrimitives.ReadUInt32LittleEndian(span[^14..]);
-            uint playerSlotsCount = BinaryPrimitives.ReadUInt32LittleEndian(span[^10..]);
-            ushort port = BinaryPrimitives.ReadUInt16LittleEndian(span[^2..]);
-
-            string name = GetStringSegment(span[20..]);
+            string name = GetStringSegment(replyPacket[20..]);
 
             int encodedSegmentStartIndex = 22 + Encoding.UTF8.GetByteCount(name);
-            byte[] decrypted = DecodeStringPart(span[encodedSegmentStartIndex..]);
+            if (encodedSegmentStartIndex >= replyPacket.Length)
+                return null;
+
+            byte[] decrypted = DecodeStringPart(replyPacket[encodedSegmentStartIndex..]);
+
+            // Decoded data must contain at least: 5 bytes prefix + 2 mapWidth + 2 mapHeight + 4 bytes + mapName null
+            if (decrypted.Length < 14)
+                return null;
 
             ReadOnlySpan<byte> decryptedSpan = decrypted;
             ushort mapWidth = BinaryPrimitives.ReadUInt16LittleEndian(decryptedSpan[5..]);
@@ -102,17 +116,17 @@ namespace WC3LanGame.Warcraft3
             string lastMapNameSegment = mapName.Split('\\').LastOrDefault();
             mapName = lastMapNameSegment ?? mapName;
 
-            return new GameInfo(gameId, name, port, gameType, slotsCount, currentPlayersCount, playerSlotsCount,
+            return new GameInfo(gameId, name, port, gameType.Value, slotsCount, currentPlayersCount, playerSlotsCount,
                 mapName, mapWidth, mapHeight);
 
             // Compare directly against cached reversed bytes — avoids string allocation and Reverse()
-            static WarcraftType ParseGameType(ReadOnlySpan<byte> gameTypeSegment)
+            static WarcraftType? ParseGameType(ReadOnlySpan<byte> gameTypeSegment)
             {
                 if (gameTypeSegment.SequenceEqual(TheFrozenThroneId))
                     return WarcraftType.TheFrozenThrone;
                 if (gameTypeSegment.SequenceEqual(ReignOfChaosId))
                     return WarcraftType.ReignOfChaos;
-                throw new ArgumentOutOfRangeException(nameof(gameTypeSegment));
+                return null;
             }
         }
 
@@ -127,6 +141,7 @@ namespace WC3LanGame.Warcraft3
         }
 
         // Decode encoded string part. This algorithm is described in 3b part of GamePacketSpecs doc.
+        // Uses pre-allocated array instead of MemoryStream to avoid GC pressure on every packet.
         private static byte[] DecodeStringPart(ReadOnlySpan<byte> data)
         {
             int firstZeroIndex = data.IndexOf((byte)0);
@@ -134,8 +149,9 @@ namespace WC3LanGame.Warcraft3
                 return [];
 
             ReadOnlySpan<byte> dataCut = data[..firstZeroIndex];
+            byte[] result = new byte[dataCut.Length];
+            int writeIndex = 0;
             byte mask = 0;
-            MemoryStream memoryStream = new MemoryStream();
 
             for (int i = 0; i < dataCut.Length; i++)
             {
@@ -143,16 +159,15 @@ namespace WC3LanGame.Warcraft3
 
                 if (i % 8 != 0)
                 {
-                    if ((mask & (1 << (i % 8))) == 0)
-                        memoryStream.WriteByte((byte)(b - 1));
-                    else
-                        memoryStream.WriteByte(b);
+                    result[writeIndex++] = (mask & (1 << (i % 8))) == 0
+                        ? (byte)(b - 1)
+                        : b;
                 }
                 else
                     mask = b;
             }
 
-            return memoryStream.ToArray();
+            return result[..writeIndex];
         }
     }
 }

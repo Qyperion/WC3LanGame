@@ -1,5 +1,6 @@
 ﻿using Microsoft.Win32;
 
+using System.ComponentModel;
 using System.Diagnostics;
 
 using WC3LanGame.Warcraft3.Types;
@@ -27,7 +28,11 @@ namespace WC3LanGame.Warcraft3
                 Process.Start(program);
                 return "Warcraft3 process started!";
             }
-            catch (Exception ex)
+            catch (Win32Exception ex)
+            {
+                return $"Unable to launch WC3 ({program}).\nException: {ex.Message}";
+            }
+            catch (FileNotFoundException ex)
             {
                 return $"Unable to launch WC3 ({program}).\nException: {ex.Message}";
             }
@@ -46,17 +51,34 @@ namespace WC3LanGame.Warcraft3
         public static bool IsWC3ProcessRunning()
         {
             Process[] processes = Process.GetProcessesByName(Warcraft3ProcessName);
-            return processes.Length > 0;
+            try
+            {
+                return processes.Length > 0;
+            }
+            finally
+            {
+                foreach (Process process in processes)
+                    process.Dispose();
+            }
         }
 
         public static string StopWC3ProcessRunning()
         {
-            Process wc3Process = Process.GetProcessesByName(Warcraft3ProcessName).FirstOrDefault();
-            if (wc3Process == null)
-                return "WC3 isn't running.";
+            Process[] processes = Process.GetProcessesByName(Warcraft3ProcessName);
+            try
+            {
+                Process wc3Process = processes.FirstOrDefault();
+                if (wc3Process == null)
+                    return "WC3 isn't running.";
 
-            wc3Process.CloseMainWindow();
-            return "WC3 process was stopped.";
+                wc3Process.CloseMainWindow();
+                return "WC3 process was stopped.";
+            }
+            finally
+            {
+                foreach (Process process in processes)
+                    process.Dispose();
+            }
         }
     }
 }

@@ -57,6 +57,11 @@ namespace WC3LanGame.Network
                 {
                     break;
                 }
+                catch (SocketException)
+                {
+                    // Socket error during accept — stop listening
+                    break;
+                }
             }
         }
 

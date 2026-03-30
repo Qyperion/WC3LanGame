@@ -27,6 +27,7 @@ namespace WC3LanGame.Network
         private readonly int _proxyPort;
         private readonly CancellationToken _cancellationToken;
 
+        private readonly Lock _queryLock = new();
         private bool _querying;
 
         public event Action<GameInfo> FoundServer;
@@ -83,15 +84,26 @@ namespace WC3LanGame.Network
             List<GameInfo> foundGames = CollectResponses();
             NotifyFoundGames(foundGames);
 
-            if (_querying) return;
-            _querying = true;
+            lock (_queryLock)
+            {
+                if (_querying) return;
+                _querying = true;
+            }
 
-            SendQuery();
+            try
+            {
+                SendQuery();
 
-            _querying = false;
-
-            foundGames = CollectResponses();
-            NotifyFoundGames(foundGames);
+                foundGames = CollectResponses();
+                NotifyFoundGames(foundGames);
+            }
+            finally
+            {
+                lock (_queryLock)
+                {
+                    _querying = false;
+                }
+            }
         }
 
         private void SendQuery()
@@ -168,11 +180,17 @@ namespace WC3LanGame.Network
         // This will not work properly for other languages
         private static void ModifyGameName(byte[] response)
         {
+            if (response.Length < GameNameOffset + ProxyNameBytes.Length)
+                return;
+
             ProxyNameBytes.CopyTo(response, GameNameOffset);
         }
 
         private static void ModifyGamePort(byte[] response, int port)
         {
+            if (response.Length < 2)
+                return;
+
             response[^2] = (byte)(port & 0xff);
             response[^1] = (byte)(port >> 8);
         }

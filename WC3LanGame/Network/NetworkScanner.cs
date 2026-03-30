@@ -36,66 +36,30 @@ namespace WC3LanGame.Network
                 .ToList();
         }
 
-        public static async Task<List<string>> ScanNetwork(
-            UnicastIPAddressInformation ipAddress, CancellationToken cancellationToken = default)
-        {
-            string network = ipAddress.Address + "/" + ipAddress.PrefixLength;
-            var ipNetwork = IPNetwork2.Parse(network);
-            string[] networkClientAddresses = ipNetwork.ListIPAddress(Filter.Usable)
-                .Select(ip => ip.ToString()).ToArray();
-
-            ConcurrentBag<string> activeClients = [];
-            ParallelOptions parallelOptions = new()
-            {
-                MaxDegreeOfParallelism = MaxParallelPings,
-                CancellationToken = cancellationToken
-            };
-
-            await Parallel.ForEachAsync(networkClientAddresses, parallelOptions, async (ip, ct) =>
-            {
-                using Ping ping = new();
-                PingReply reply = await ping.SendPingAsync(ip, 100);
-                if (reply.Status == IPStatus.Success)
-                    activeClients.Add(ip);
-            });
-
-            return activeClients.ToList();
-        }
-
-        public static async Task<List<string>> FindActiveIpInAllLocalNetworks(
-            CancellationToken cancellationToken = default)
-        {
-            var localIpList = GetLocalIPv4Addresses();
-            List<string> allActiveClients = [];
-
-            foreach (var ip in localIpList)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                List<string> activeClients = await ScanNetwork(ip, cancellationToken);
-                allActiveClients.AddRange(activeClients);
-            }
-
-            return allActiveClients;
-        }
-
+        /// <summary>
+        /// Scans all local networks in parallel and returns active IP addresses.
+        /// Reports progress via optional IProgress (value 0.0 to 1.0).
+        /// </summary>
         public static async Task<string[]> FindAllActiveIpInAllLocalNetworks(
-            ProgressBar progressBar, CancellationToken cancellationToken = default)
+            IProgress<double> progress = null, CancellationToken cancellationToken = default)
         {
-            List<string> allNetworksClientAddresses = [];
             var localIpList = GetLocalIPv4Addresses();
 
+            List<string> allNetworkClientAddresses = [];
             foreach (var localIp in localIpList)
             {
                 string network = localIp.Address + "/" + localIp.PrefixLength;
                 var ipNetwork = IPNetwork2.Parse(network);
                 var networkClientAddresses = ipNetwork.ListIPAddress(Filter.Usable)
                     .Select(ip => ip.ToString());
-                allNetworksClientAddresses.AddRange(networkClientAddresses);
+                allNetworkClientAddresses.AddRange(networkClientAddresses);
             }
 
-            progressBar.Minimum = 0;
-            progressBar.Maximum = allNetworksClientAddresses.Count;
+            int totalCount = allNetworkClientAddresses.Count;
+            if (totalCount == 0)
+                return [];
 
+            int scannedCount = 0;
             ConcurrentBag<string> activeClients = [];
             ParallelOptions parallelOptions = new()
             {
@@ -105,21 +69,21 @@ namespace WC3LanGame.Network
 
             try
             {
-                await Parallel.ForEachAsync(allNetworksClientAddresses, parallelOptions, async (ip, ct) =>
+                await Parallel.ForEachAsync(allNetworkClientAddresses, parallelOptions, async (ip, ct) =>
                 {
                     using Ping ping = new();
                     PingReply reply = await ping.SendPingAsync(ip, 250);
                     if (reply.Status == IPStatus.Success)
                         activeClients.Add(ip);
-                    progressBar.BeginInvoke(() => progressBar.Value++);
+
+                    int current = Interlocked.Increment(ref scannedCount);
+                    progress?.Report((double)current / totalCount);
                 });
             }
             catch (OperationCanceledException)
             {
                 // Scanning cancelled — return whatever was found so far
             }
-
-            progressBar.BeginInvoke(() => progressBar.Visible = false);
 
             return activeClients.ToArray();
         }
