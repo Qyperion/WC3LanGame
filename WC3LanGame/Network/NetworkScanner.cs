@@ -1,4 +1,5 @@
-﻿using System.Net;
+﻿using System.Collections.Concurrent;
+using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 
@@ -6,6 +7,8 @@ namespace WC3LanGame.Network
 {
     internal static class NetworkScanner
     {
+        private const int MaxParallelPings = 50;
+
         public static IPAddress ResolveHost(string host)
         {
             if (string.IsNullOrWhiteSpace(host))
@@ -18,7 +21,7 @@ namespace WC3LanGame.Network
             {
                 return Dns.GetHostEntry(host).AddressList.FirstOrDefault();
             }
-            catch(SocketException) // SocketException : No such host is known.
+            catch (SocketException) // No such host is known
             {
                 return null;
             }
@@ -33,44 +36,52 @@ namespace WC3LanGame.Network
                 .ToList();
         }
 
-        public static async Task<List<string>> ScanNetwork(UnicastIPAddressInformation ipAddress)
+        public static async Task<List<string>> ScanNetwork(
+            UnicastIPAddressInformation ipAddress, CancellationToken cancellationToken = default)
         {
             string network = ipAddress.Address + "/" + ipAddress.PrefixLength;
             var ipNetwork = IPNetwork2.Parse(network);
             string[] networkClientAddresses = ipNetwork.ListIPAddress(Filter.Usable)
                 .Select(ip => ip.ToString()).ToArray();
 
-            List<string> activeClients = new List<string>();
-            ParallelOptions parallelOptions = new() { MaxDegreeOfParallelism = networkClientAddresses.Length };
-
-            await Parallel.ForEachAsync(networkClientAddresses, parallelOptions, async (ip, _) =>
+            ConcurrentBag<string> activeClients = [];
+            ParallelOptions parallelOptions = new()
             {
-                Ping ping = new Ping();
+                MaxDegreeOfParallelism = MaxParallelPings,
+                CancellationToken = cancellationToken
+            };
+
+            await Parallel.ForEachAsync(networkClientAddresses, parallelOptions, async (ip, ct) =>
+            {
+                using Ping ping = new();
                 PingReply reply = await ping.SendPingAsync(ip, 100);
                 if (reply.Status == IPStatus.Success)
                     activeClients.Add(ip);
             });
 
-            return activeClients;
+            return activeClients.ToList();
         }
 
-        public static async Task<List<string>> FindActiveIpInAllLocalNetworks()
+        public static async Task<List<string>> FindActiveIpInAllLocalNetworks(
+            CancellationToken cancellationToken = default)
         {
             var localIpList = GetLocalIPv4Addresses();
-            List<string> allActiveClients = new List<string>();
+            List<string> allActiveClients = [];
 
             foreach (var ip in localIpList)
             {
-                List<string> activeClients = await ScanNetwork(ip);
+                cancellationToken.ThrowIfCancellationRequested();
+                List<string> activeClients = await ScanNetwork(ip, cancellationToken);
                 allActiveClients.AddRange(activeClients);
             }
 
             return allActiveClients;
         }
 
-        public static async Task<string[]> FindAllActiveIpInAllLocalNetworks(ProgressBar progressBar)
+        public static async Task<string[]> FindAllActiveIpInAllLocalNetworks(
+            ProgressBar progressBar, CancellationToken cancellationToken = default)
         {
-            List<string> allNetworksClientAddresses = new List<string>();
+            List<string> allNetworksClientAddresses = [];
             var localIpList = GetLocalIPv4Addresses();
 
             foreach (var localIp in localIpList)
@@ -85,17 +96,28 @@ namespace WC3LanGame.Network
             progressBar.Minimum = 0;
             progressBar.Maximum = allNetworksClientAddresses.Count;
 
-            List<string> activeClients = new List<string>();
-            ParallelOptions parallelOptions = new() { MaxDegreeOfParallelism = allNetworksClientAddresses.Count };
-
-            await Parallel.ForEachAsync(allNetworksClientAddresses, parallelOptions, async (ip, _) =>
+            ConcurrentBag<string> activeClients = [];
+            ParallelOptions parallelOptions = new()
             {
-                Ping ping = new Ping();
-                PingReply reply = await ping.SendPingAsync(ip, 250);
-                if (reply.Status == IPStatus.Success)
-                    activeClients.Add(ip);
-                progressBar.BeginInvoke(() => progressBar.Value++);
-            });
+                MaxDegreeOfParallelism = MaxParallelPings,
+                CancellationToken = cancellationToken
+            };
+
+            try
+            {
+                await Parallel.ForEachAsync(allNetworksClientAddresses, parallelOptions, async (ip, ct) =>
+                {
+                    using Ping ping = new();
+                    PingReply reply = await ping.SendPingAsync(ip, 250);
+                    if (reply.Status == IPStatus.Success)
+                        activeClients.Add(ip);
+                    progressBar.BeginInvoke(() => progressBar.Value++);
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                // Scanning cancelled — return whatever was found so far
+            }
 
             progressBar.BeginInvoke(() => progressBar.Visible = false);
 
