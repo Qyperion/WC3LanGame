@@ -4,69 +4,87 @@ using System.Net.Sockets;
 
 namespace WC3LanGame.Network
 {
-    internal delegate void ProxyDisconnectedHandler(TcpProxy proxy);
-
-    internal class TcpProxy
+    internal class TcpProxy : IDisposable
     {
         private readonly Socket _serverSocket = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 
         private readonly Socket _clientSocket;
         private readonly EndPoint _serverEP;
+        private readonly CancellationToken _cancellationToken;
 
         private Thread _listenSocketsThread;
-        private bool _isRunning;
 
-        public event ProxyDisconnectedHandler ProxyDisconnected;
+        public event Action<TcpProxy> ProxyDisconnected;
 
-        public TcpProxy(Socket clientSocket, EndPoint serverEP)
+        public TcpProxy(Socket clientSocket, EndPoint serverEP, CancellationToken cancellationToken = default)
         {
             _clientSocket = clientSocket;
             _serverEP = serverEP;
+            _cancellationToken = cancellationToken;
         }
 
         public void Run()
         {
             _serverSocket.Connect(_serverEP);
 
-            _isRunning = true;
             _listenSocketsThread = new Thread(ListenSockets);
             _listenSocketsThread.Start();
         }
 
-        public void Stop()
+        public void Dispose()
         {
-            _isRunning = false;
-            _listenSocketsThread?.Join();
+            try { _serverSocket.Close(); } catch (ObjectDisposedException) { }
+            try { _clientSocket.Close(); } catch (ObjectDisposedException) { }
+            _listenSocketsThread?.Join(TimeSpan.FromSeconds(2));
         }
 
         private void ListenSockets()
         {
             byte[] buffer = new byte[2048];
-            List<Socket> sockets = new List<Socket>() {_clientSocket, _serverSocket};
+            List<Socket> sockets = [_clientSocket, _serverSocket];
 
-            while (_isRunning)
+            while (!_cancellationToken.IsCancellationRequested)
             {
                 IList readSockets = new List<Socket>(sockets);
                 Socket.Select(readSockets, null, null, 1000000);
 
                 foreach (Socket socket in readSockets)
                 {
-                    int bufferLength = 0;
+                    int bufferLength;
                     try
                     {
                         bufferLength = socket.Receive(buffer);
                     }
-                    catch { }
+                    catch (SocketException)
+                    {
+                        ProxyDisconnected?.Invoke(this);
+                        return;
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        return;
+                    }
 
                     if (bufferLength == 0)
                     {
-                        _isRunning = false;
                         ProxyDisconnected?.Invoke(this);
-                        break;
+                        return;
                     }
 
                     Socket destinationSocket = socket == _serverSocket ? _clientSocket : _serverSocket;
-                    destinationSocket.Send(buffer, bufferLength, SocketFlags.None);
+                    try
+                    {
+                        destinationSocket.Send(buffer, bufferLength, SocketFlags.None);
+                    }
+                    catch (SocketException)
+                    {
+                        ProxyDisconnected?.Invoke(this);
+                        return;
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        return;
+                    }
                 }
             }
         }

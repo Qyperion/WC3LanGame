@@ -3,37 +3,32 @@ using System.Net.Sockets;
 
 namespace WC3LanGame.Network
 {
-    internal delegate void GotConnectionDelegate(Socket clientSocket);
-
-    internal class Listener
+    internal class Listener : IDisposable
     {
         public IPEndPoint LocalEndPoint => (IPEndPoint)_listenSocket.LocalEndPoint;
 
         private Socket _listenSocket;
-        private readonly GotConnectionDelegate _connectionHandler;
+        private readonly Action<Socket> _connectionHandler;
         private readonly IPAddress _address;
-        private readonly AsyncCallback _acceptCallback;
+        private readonly CancellationToken _cancellationToken;
 
         private int _port;
-        private bool _stop;
 
-        private Listener(IPAddress address, int port, GotConnectionDelegate connectionHandler)
+        private Listener(IPAddress address, int port, Action<Socket> connectionHandler, CancellationToken cancellationToken)
         {
             _address = address;
             _port = port;
             _connectionHandler = connectionHandler;
-            _acceptCallback = EndAccept;
+            _cancellationToken = cancellationToken;
         }
 
-        public Listener(GotConnectionDelegate connectionHandler)
-            : this(IPAddress.Any, 0, connectionHandler)
+        public Listener(Action<Socket> connectionHandler, CancellationToken cancellationToken = default)
+            : this(IPAddress.Any, 0, connectionHandler, cancellationToken)
         {
         }
 
         public void Run()
         {
-            _stop = false;
-
             IPEndPoint endPoint = new IPEndPoint(_address, _port);
 
             _listenSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.IP);
@@ -42,36 +37,32 @@ namespace WC3LanGame.Network
             _port = LocalEndPoint.Port;
             _listenSocket.Listen(20);
 
-            BeginAccept();
+            _ = AcceptLoopAsync();
         }
 
-        private void BeginAccept()
+        private async Task AcceptLoopAsync()
         {
-            if (_stop) 
-                return;
-
-            _listenSocket.BeginAccept(_acceptCallback, null);
-        }
-
-        private void EndAccept(IAsyncResult result)
-        {
-            if (_stop) 
-                return;
-
-            try
+            while (!_cancellationToken.IsCancellationRequested)
             {
-                Socket client = _listenSocket.EndAccept(result);
-                _connectionHandler(client);
+                try
+                {
+                    Socket client = await _listenSocket.AcceptAsync(_cancellationToken);
+                    _connectionHandler(client);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (ObjectDisposedException)
+                {
+                    break;
+                }
             }
-            catch (ObjectDisposedException) { }
-            
-            BeginAccept();
         }
 
-        public void Stop()
+        public void Dispose()
         {
-            _stop = true;
-            _listenSocket.Close();
+            try { _listenSocket?.Close(); } catch (ObjectDisposedException) { }
             _listenSocket = null;
         }
     }
