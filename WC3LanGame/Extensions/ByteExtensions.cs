@@ -1,4 +1,4 @@
-﻿namespace WC3LanGame.Warcraft3
+﻿namespace WC3LanGame.Extensions
 {
     internal static class ByteExtensions
     {
