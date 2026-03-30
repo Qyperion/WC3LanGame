@@ -20,6 +20,7 @@ namespace WC3LanGame
 
         public GameInfo CurrentGame { get; private set; }
         public IPAddress ServerAddress { get; private set; }
+        public HostInfo LastHostInfo { get; private set; }
         public bool IsRunning => _cts is { IsCancellationRequested: false };
 
         public int ConnectionCount
@@ -31,6 +32,7 @@ namespace WC3LanGame
         public event Action GameLost;
         public event Action<string> Notification;
         public event Action ConnectionCountChanged;
+        public event Action Faulted;
 
         /// <summary>
         /// Starts the proxy service. Throws SocketException if listener fails to bind,
@@ -38,6 +40,7 @@ namespace WC3LanGame
         /// </summary>
         public void Start(HostInfo hostInfo)
         {
+            LastHostInfo = hostInfo;
             _cts = new CancellationTokenSource();
             var token = _cts.Token;
 
@@ -49,18 +52,23 @@ namespace WC3LanGame
 
             // Start listener first — if this throws SocketException, let it propagate
             _listener = new Listener(GotConnection, token);
+            _listener.Faulted += OnComponentFaulted;
             _listener.Run();
 
             // Start browser
             _browser = new Browser(ServerAddress, _listener.LocalEndPoint.Port, hostInfo, token);
             _browser.FoundServer += OnFoundServer;
             _browser.QuerySent += OnQuerySent;
+            _browser.Faulted += OnComponentFaulted;
             _browser.Run();
         }
 
         public void Dispose()
         {
             _cts?.Cancel();
+
+            if (_listener != null)
+                _listener.Faulted -= OnComponentFaulted;
 
             _listener?.Dispose();
 
@@ -83,6 +91,7 @@ namespace WC3LanGame
             {
                 _browser.FoundServer -= OnFoundServer;
                 _browser.QuerySent -= OnQuerySent;
+                _browser.Faulted -= OnComponentFaulted;
             }
 
             _browser?.Dispose();
@@ -138,6 +147,15 @@ namespace WC3LanGame
 
             Notification?.Invoke("Lost game");
             GameLost?.Invoke();
+        }
+
+        private void OnComponentFaulted()
+        {
+            // Ignore if already shutting down
+            if (_cts == null || _cts.IsCancellationRequested)
+                return;
+
+            Faulted?.Invoke();
         }
 
         private void GotConnection(Socket clientSocket)

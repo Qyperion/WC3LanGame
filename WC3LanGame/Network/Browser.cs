@@ -32,6 +32,9 @@ namespace WC3LanGame.Network
 
         public event Action<GameInfo> FoundServer;
         public event Action QuerySent;
+        public event Action Faulted;
+
+        private int _consecutiveSendFailures;
 
         public Browser(IPAddress serverAddress, int proxyPort, HostInfo hostInfo, CancellationToken cancellationToken = default)
         {
@@ -108,10 +111,31 @@ namespace WC3LanGame.Network
 
         private void SendQuery()
         {
-            lock (_socketLock)
+            try
             {
-                _browseSocket?.SendTo(_browsePacket, _serverEndPoint);
+                lock (_socketLock)
+                {
+                    _browseSocket?.SendTo(_browsePacket, _serverEndPoint);
+                }
+                _consecutiveSendFailures = 0;
             }
+            catch (SocketException)
+            {
+                _consecutiveSendFailures++;
+                if (_consecutiveSendFailures >= 5)
+                {
+                    _queryTimer.Stop();
+                    Faulted?.Invoke();
+                }
+                return;
+            }
+            catch (ObjectDisposedException)
+            {
+                _queryTimer.Stop();
+                Faulted?.Invoke();
+                return;
+            }
+
             QuerySent?.Invoke();
         }
 

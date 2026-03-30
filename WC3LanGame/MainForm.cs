@@ -18,6 +18,12 @@ namespace WC3LanGame
 
         private readonly Timer _updateWC3RunningStatusTimer = new(3000);
 
+        // Auto-reconnect state
+        private HostInfo _lastHostInfo;
+        private Timer _reconnectTimer;
+        private bool _reconnecting;
+        private int _reconnectAttempt;
+
 
         public MainForm()
         {
@@ -69,6 +75,8 @@ namespace WC3LanGame
             if (!string.IsNullOrWhiteSpace(_settings.HostAddress))
                 hostAddressComboBox.Text = _settings.HostAddress;
 
+            autoReconnectCheckBox.Checked = _settings.AutoReconnect;
+
             UpdateWC3RunningStatus(null, null);
             _updateWC3RunningStatusTimer.Elapsed += UpdateWC3RunningStatus;
             _updateWC3RunningStatusTimer.Start();
@@ -113,6 +121,7 @@ namespace WC3LanGame
             _settings.HostAddress = hostAddressComboBox.Text;
             _settings.Version = wc3VersionComboBox.SelectedItem as WarcraftVersion?;
             _settings.GameType = gameTypeComboBox.SelectedItem as WarcraftType?;
+            _settings.AutoReconnect = autoReconnectCheckBox.Checked;
             _settings.Save();
 
             _scanCts?.Cancel();
@@ -214,13 +223,10 @@ namespace WC3LanGame
 
         #region Logic
 
-        private void RunProxy(HostInfo hostInfo)
+        /// <returns>true if proxy started successfully</returns>
+        private bool RunProxy(HostInfo hostInfo)
         {
             _proxyService = new ProxyService();
-            _proxyService.GameFound += ProxyService_GameFound;
-            _proxyService.GameLost += ProxyService_GameLost;
-            _proxyService.Notification += ProxyService_Notification;
-            _proxyService.ConnectionCountChanged += ProxyService_ConnectionCountChanged;
 
             try
             {
@@ -231,17 +237,28 @@ namespace WC3LanGame
                 _proxyService.Dispose();
                 _proxyService = null;
                 Log($"Unable to start listener: {ex.Message}");
-                MessageBox.Show("Unable to start listener\n" + ex.Message);
-                return;
+                if (!_reconnecting)
+                    MessageBox.Show("Unable to start listener\n" + ex.Message);
+                return false;
             }
             catch (InvalidOperationException ex)
             {
                 _proxyService.Dispose();
                 _proxyService = null;
                 Log($"Error: {ex.Message}");
-                MessageBox.Show(ex.Message);
-                return;
+                if (!_reconnecting)
+                    MessageBox.Show(ex.Message);
+                return false;
             }
+
+            // Subscribe events only after successful start
+            _proxyService.GameFound += ProxyService_GameFound;
+            _proxyService.GameLost += ProxyService_GameLost;
+            _proxyService.Notification += ProxyService_Notification;
+            _proxyService.ConnectionCountChanged += ProxyService_ConnectionCountChanged;
+            _proxyService.Faulted += ProxyService_Faulted;
+
+            _lastHostInfo = hostInfo;
 
             string description = _proxyService.ServerAddress.ToString() == hostInfo.Hostname
                 ? hostInfo.Hostname
@@ -253,19 +270,109 @@ namespace WC3LanGame
             runProxyButton.Visible = false;
             stopProxyButton.Visible = true;
             gameInfoTableLayoutPanel.Visible = true;
+            return true;
         }
 
-        private void StopProxy()
+        private void StopProxy(bool userInitiated = true)
         {
-            _proxyService?.Dispose();
-            _proxyService = null;
+            if (userInitiated)
+            {
+                _reconnecting = false;
+                _reconnectTimer?.Stop();
+                _reconnectTimer?.Dispose();
+                _reconnectTimer = null;
+            }
 
-            Log("Proxy stopped");
+            if (_proxyService != null)
+            {
+                _proxyService.GameFound -= ProxyService_GameFound;
+                _proxyService.GameLost -= ProxyService_GameLost;
+                _proxyService.Notification -= ProxyService_Notification;
+                _proxyService.ConnectionCountChanged -= ProxyService_ConnectionCountChanged;
+                _proxyService.Faulted -= ProxyService_Faulted;
+                _proxyService.Dispose();
+                _proxyService = null;
+            }
 
-            runProxyButton.Visible = true;
-            stopProxyButton.Visible = false;
-            gameInfoTableLayoutPanel.Visible = false;
-            proxyActiveLabel.Visible = false;
+            if (userInitiated)
+            {
+                Log("Proxy stopped");
+                runProxyButton.Visible = true;
+                stopProxyButton.Visible = false;
+                gameInfoTableLayoutPanel.Visible = false;
+                proxyActiveLabel.Visible = false;
+            }
+            else
+            {
+                proxyActiveLabel.Visible = false;
+            }
+        }
+
+        private void ProxyService_Faulted()
+        {
+            BeginInvoke(() =>
+            {
+                if (_reconnecting) return;
+
+                if (!autoReconnectCheckBox.Checked)
+                {
+                    Log("Proxy connection lost");
+                    StopProxy();
+                    return;
+                }
+
+                _reconnecting = true;
+                _reconnectAttempt = 0;
+                ScheduleReconnect();
+            });
+        }
+
+        private void ScheduleReconnect()
+        {
+            _reconnectAttempt++;
+            int delaySeconds = Math.Min(5 * _reconnectAttempt, 30);
+
+            Log($"Connection lost. Reconnecting in {delaySeconds}s (attempt {_reconnectAttempt})...");
+
+            _reconnectTimer?.Stop();
+            _reconnectTimer?.Dispose();
+            _reconnectTimer = new Timer(delaySeconds * 1000);
+            _reconnectTimer.AutoReset = false;
+            _reconnectTimer.Elapsed += ReconnectTimer_Elapsed;
+            _reconnectTimer.Start();
+        }
+
+        private void ReconnectTimer_Elapsed(object sender, ElapsedEventArgs e)
+        {
+            BeginInvoke(AttemptReconnect);
+        }
+
+        private void AttemptReconnect()
+        {
+            if (!_reconnecting) return;
+
+            StopProxy(userInitiated: false);
+
+            if (_lastHostInfo == null || !autoReconnectCheckBox.Checked)
+            {
+                _reconnecting = false;
+                Log("Reconnection cancelled");
+                runProxyButton.Visible = true;
+                stopProxyButton.Visible = false;
+                return;
+            }
+
+            Log($"Reconnecting to {_lastHostInfo.Hostname}...");
+            if (RunProxy(_lastHostInfo))
+            {
+                _reconnecting = false;
+                _reconnectAttempt = 0;
+                Log("Reconnected successfully");
+            }
+            else
+            {
+                ScheduleReconnect();
+            }
         }
 
         private void ProxyService_GameFound(GameInfo gameInfo)

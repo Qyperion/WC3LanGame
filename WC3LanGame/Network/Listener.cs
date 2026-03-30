@@ -7,6 +7,8 @@ namespace WC3LanGame.Network
     {
         public IPEndPoint LocalEndPoint => (IPEndPoint)_listenSocket.LocalEndPoint;
 
+        public event Action Faulted;
+
         private Socket _listenSocket;
         private readonly Action<Socket> _connectionHandler;
         private readonly IPAddress _address;
@@ -42,6 +44,7 @@ namespace WC3LanGame.Network
 
         private async Task AcceptLoopAsync()
         {
+            bool faulted = false;
             while (!_cancellationToken.IsCancellationRequested)
             {
                 try
@@ -55,14 +58,19 @@ namespace WC3LanGame.Network
                 }
                 catch (ObjectDisposedException)
                 {
+                    faulted = true;
                     break;
                 }
                 catch (SocketException)
                 {
                     // Socket error during accept — stop listening
+                    faulted = true;
                     break;
                 }
             }
+
+            if (faulted)
+                Faulted?.Invoke();
         }
 
         public void Dispose()

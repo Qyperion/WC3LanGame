@@ -62,6 +62,7 @@
             this.scanningNetworkLabel = new System.Windows.Forms.Label();
             this.stopWC3Button = new System.Windows.Forms.Button();
             this.proxyActiveLabel = new System.Windows.Forms.Label();
+            this.autoReconnectCheckBox = new System.Windows.Forms.CheckBox();
             this.gameInfoTableLayoutPanel.SuspendLayout();
             this.SuspendLayout();
             // 
@@ -412,6 +413,17 @@
             this.proxyActiveLabel.Text = "Proxy is active!";
             this.proxyActiveLabel.Visible = false;
             // 
+            // autoReconnectCheckBox
+            // 
+            this.autoReconnectCheckBox.AutoSize = true;
+            this.autoReconnectCheckBox.Font = new System.Drawing.Font("Segoe UI", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point);
+            this.autoReconnectCheckBox.Location = new System.Drawing.Point(12, 233);
+            this.autoReconnectCheckBox.Name = "autoReconnectCheckBox";
+            this.autoReconnectCheckBox.Size = new System.Drawing.Size(127, 23);
+            this.autoReconnectCheckBox.TabIndex = 20;
+            this.autoReconnectCheckBox.Text = "Auto-reconnect";
+            this.autoReconnectCheckBox.UseVisualStyleBackColor = true;
+            // 
             // logTitleLabel
             // 
             this.logTitleLabel = new System.Windows.Forms.Label();
@@ -444,6 +456,7 @@
             this.BackgroundImage = global::WC3LanGame.Properties.Resources.WarcraftBackgroundImage;
             this.BackgroundImageLayout = System.Windows.Forms.ImageLayout.Stretch;
             this.ClientSize = new System.Drawing.Size(624, 460);
+            this.Controls.Add(this.autoReconnectCheckBox);
             this.Controls.Add(this.logRichTextBox);
             this.Controls.Add(this.logTitleLabel);
             this.Controls.Add(this.proxyActiveLabel);
@@ -511,5 +524,6 @@
         private Label proxyActiveLabel;
         private Label logTitleLabel;
         private RichTextBox logRichTextBox;
+        private CheckBox autoReconnectCheckBox;
     }
 }

@@ -23,6 +23,7 @@ namespace WC3LanGame
         public string HostAddress { get; set; }
         public WarcraftVersion? Version { get; set; }
         public WarcraftType? GameType { get; set; }
+        public bool AutoReconnect { get; set; }
 
         internal static AppSettings Load()
         {
