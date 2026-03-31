@@ -20,11 +20,9 @@ namespace WC3LanGame.App
 
         private readonly Timer _updateWC3RunningStatusTimer = new(3000);
 
-        // Auto-reconnect state
+        // Reconnect state
+        private readonly ReconnectManager _reconnectManager = new();
         private HostInfo _lastHostInfo;
-        private Timer _reconnectTimer;
-        private bool _reconnecting;
-        private int _reconnectAttempt;
 
 
         public MainForm()
@@ -32,6 +30,10 @@ namespace WC3LanGame.App
             InitializeComponent();
             _settings = AppSettings.Load();
             InitSettingsComponent();
+            DarkMode.Apply(this);
+
+            _reconnectManager.ReconnectScheduled += ReconnectManager_ReconnectScheduled;
+            _reconnectManager.ReconnectRequested += ReconnectManager_ReconnectRequested;
         }
 
         #region Controls
@@ -158,6 +160,7 @@ namespace WC3LanGame.App
 
             _scanCts?.Cancel();
             StopProxy();
+            _reconnectManager.Dispose();
             _updateWC3RunningStatusTimer.Stop();
             _updateWC3RunningStatusTimer.Dispose();
         }
@@ -245,7 +248,8 @@ namespace WC3LanGame.App
 
         private async Task ScanNetworkAsync()
         {
-            await _scanCts?.CancelAsync();
+            if (_scanCts != null)
+                await _scanCts.CancelAsync();
             _scanCts = new CancellationTokenSource();
 
             scanningNetworkLabel.Visible = true;
@@ -340,7 +344,7 @@ namespace WC3LanGame.App
                 _proxyService.Dispose();
                 _proxyService = null;
                 Log($"Unable to start listener: {ex.Message}", LogLevel.Error);
-                if (!_reconnecting)
+                if (!_reconnectManager.IsReconnecting)
                     MessageBox.Show("Unable to start listener\n" + ex.Message);
                 return false;
             }
@@ -349,7 +353,7 @@ namespace WC3LanGame.App
                 _proxyService.Dispose();
                 _proxyService = null;
                 Log($"Error: {ex.Message}", LogLevel.Error);
-                if (!_reconnecting)
+                if (!_reconnectManager.IsReconnecting)
                     MessageBox.Show(ex.Message);
                 return false;
             }
@@ -384,12 +388,7 @@ namespace WC3LanGame.App
         private void StopProxy(bool userInitiated = true)
         {
             if (userInitiated)
-            {
-                _reconnecting = false;
-                _reconnectTimer?.Stop();
-                _reconnectTimer?.Dispose();
-                _reconnectTimer = null;
-            }
+                _reconnectManager.Stop();
 
             if (_proxyService != null)
             {
@@ -418,11 +417,11 @@ namespace WC3LanGame.App
             }
         }
 
-        private void ProxyService_Faulted()
+        private void ProxyService_Faulted(object sender, EventArgs e)
         {
             BeginInvoke(() =>
             {
-                if (_reconnecting) return;
+                if (_reconnectManager.IsReconnecting) return;
 
                 if (!autoReconnectCheckBox.Checked)
                 {
@@ -431,42 +430,33 @@ namespace WC3LanGame.App
                     return;
                 }
 
-                _reconnecting = true;
-                _reconnectAttempt = 0;
-                ScheduleReconnect();
+                _reconnectManager.Start();
             });
         }
 
-        private void ScheduleReconnect()
+        private void ReconnectManager_ReconnectScheduled(int attempt, int delaySeconds)
         {
-            _reconnectAttempt++;
-            int delaySeconds = Math.Min(5 * _reconnectAttempt, 30);
-
-            Log($"Connection lost. Reconnecting in {delaySeconds}s (attempt {_reconnectAttempt})...", LogLevel.Warning);
-            UpdateConnectionStatus($"\u25CF Reconnecting ({_reconnectAttempt})...", Color.FromArgb(255, 180, 0));
-
-            _reconnectTimer?.Stop();
-            _reconnectTimer?.Dispose();
-            _reconnectTimer = new Timer(delaySeconds * 1000);
-            _reconnectTimer.AutoReset = false;
-            _reconnectTimer.Elapsed += ReconnectTimer_Elapsed;
-            _reconnectTimer.Start();
+            BeginInvoke(() =>
+            {
+                Log($"Connection lost. Reconnecting in {delaySeconds}s (attempt {attempt})...", LogLevel.Warning);
+                UpdateConnectionStatus($"\u25CF Reconnecting ({attempt})...", Color.FromArgb(255, 180, 0));
+            });
         }
 
-        private void ReconnectTimer_Elapsed(object sender, ElapsedEventArgs e)
+        private void ReconnectManager_ReconnectRequested()
         {
             BeginInvoke(AttemptReconnect);
         }
 
         private void AttemptReconnect()
         {
-            if (!_reconnecting) return;
+            if (!_reconnectManager.IsReconnecting) return;
 
             StopProxy(userInitiated: false);
 
             if (_lastHostInfo == null || !autoReconnectCheckBox.Checked)
             {
-                _reconnecting = false;
+                _reconnectManager.Stop();
                 Log("Reconnection cancelled", LogLevel.Warning);
                 runProxyButton.Text = "Connect";
                 runProxyButton.Visible = true;
@@ -483,17 +473,16 @@ namespace WC3LanGame.App
             Log($"Reconnecting to {_lastHostInfo.Hostname}...", LogLevel.Warning);
             if (RunProxy(_lastHostInfo))
             {
-                _reconnecting = false;
-                _reconnectAttempt = 0;
+                _reconnectManager.OnReconnectSucceeded();
                 Log("Reconnected successfully", LogLevel.Success);
             }
             else
             {
-                ScheduleReconnect();
+                _reconnectManager.OnReconnectFailed();
             }
         }
 
-        private void ProxyService_GameFound(GameInfo gameInfo)
+        private void ProxyService_GameFound(object sender, GameInfo gameInfo)
         {
             BeginInvoke(() =>
             {
@@ -503,11 +492,14 @@ namespace WC3LanGame.App
                 mapNameValueLabel.Text = gameInfo.MapName;
                 mapSizeValueLabel.Text = $"{gameInfo.MapSizeCategory} ({gameInfo.MapHeight} x {gameInfo.MapWidth})";
                 playersCountValueLabel.Text = $"{gameInfo.CurrentPlayersCount} / {gameInfo.PlayerSlotsCount} / {gameInfo.SlotsCount}";
-                UpdateConnectionStatus("\u25CF Game found", Color.LimeGreen);
+
+                int latency = _proxyService?.LatencyMs ?? -1;
+                string latencyText = latency >= 0 ? $" ({latency}ms)" : "";
+                UpdateConnectionStatus($"\u25CF Game found{latencyText}", Color.LimeGreen);
             });
         }
 
-        private void ProxyService_GameLost()
+        private void ProxyService_GameLost(object sender, EventArgs e)
         {
             BeginInvoke(() =>
             {
@@ -522,13 +514,13 @@ namespace WC3LanGame.App
             });
         }
 
-        private void ProxyService_Notification(string text)
+        private void ProxyService_Notification(object sender, string text)
         {
             Log(text);
             BeginInvoke(() => Notify(text));
         }
 
-        private void ProxyService_ConnectionCountChanged()
+        private void ProxyService_ConnectionCountChanged(object sender, EventArgs e)
         {
             BeginInvoke(() =>
             {

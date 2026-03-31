@@ -4,15 +4,17 @@ using System.Net.Sockets;
 
 namespace WC3LanGame.Core.Network
 {
-    internal class TcpProxy : IDisposable
+    internal sealed class TcpProxy : IDisposable
     {
         private readonly Socket _serverSocket = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 
         private readonly Socket _clientSocket;
         private readonly EndPoint _serverEP;
         private readonly CancellationToken _cancellationToken;
+        private readonly List<Socket> _selectList = new(2);
 
         private Thread _listenSocketsThread;
+        private bool _disposed;
 
         public event Action<TcpProxy> ProxyDisconnected;
 
@@ -33,6 +35,8 @@ namespace WC3LanGame.Core.Network
 
         public void Dispose()
         {
+            if (_disposed) return;
+            _disposed = true;
             try { _serverSocket.Close(); } catch (ObjectDisposedException) { }
             try { _clientSocket.Close(); } catch (ObjectDisposedException) { }
             _listenSocketsThread?.Join(TimeSpan.FromSeconds(2));
@@ -41,14 +45,15 @@ namespace WC3LanGame.Core.Network
         private void ListenSockets()
         {
             byte[] buffer = new byte[2048];
-            List<Socket> sockets = [_clientSocket, _serverSocket];
 
             while (!_cancellationToken.IsCancellationRequested)
             {
-                IList readSockets = new List<Socket>(sockets);
-                Socket.Select(readSockets, null, null, 1000000);
+                _selectList.Clear();
+                _selectList.Add(_clientSocket);
+                _selectList.Add(_serverSocket);
+                Socket.Select((IList)_selectList, null, null, 1000000);
 
-                foreach (Socket socket in readSockets)
+                foreach (Socket socket in _selectList)
                 {
                     int bufferLength;
                     try
@@ -74,7 +79,7 @@ namespace WC3LanGame.Core.Network
                     Socket destinationSocket = socket == _serverSocket ? _clientSocket : _serverSocket;
                     try
                     {
-                        destinationSocket.Send(buffer, bufferLength, SocketFlags.None);
+                        SendAll(destinationSocket, buffer, bufferLength);
                     }
                     catch (SocketException)
                     {
@@ -86,6 +91,18 @@ namespace WC3LanGame.Core.Network
                         return;
                     }
                 }
+            }
+        }
+
+        private static void SendAll(Socket socket, byte[] buffer, int length)
+        {
+            int sent = 0;
+            while (sent < length)
+            {
+                int n = socket.Send(buffer, sent, length - sent, SocketFlags.None);
+                if (n == 0)
+                    throw new SocketException((int)SocketError.ConnectionReset);
+                sent += n;
             }
         }
     }

@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/docs/">
+    <File Path="docs/Warcraft III Game Packet Specs.md" />
+  </Folder>
   <Project Path="src/App/App.csproj" />
   <Project Path="src/Core/Core.csproj" />
 </Solution>

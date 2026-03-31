@@ -6,33 +6,35 @@ using WC3LanGame.Core.Warcraft3.Types;
 
 namespace WC3LanGame.Core
 {
-    public class ProxyService : IDisposable
+    public sealed class ProxyService : IDisposable
     {
         private Listener _listener;
         private Browser _browser;
         private readonly List<TcpProxy> _proxies = [];
 
         private CancellationTokenSource _cts;
+        private CancellationToken _token;
         private readonly Lock _serverEndPointLock = new();
         private IPEndPoint _serverEndPoint;
-        private bool _foundGame;
-        private DateTime _lastFoundServer;
+        private bool _notifiedGameFound;
+        private bool _disposed;
 
         public GameInfo CurrentGame { get; private set; }
         public IPAddress ServerAddress { get; private set; }
         public HostInfo LastHostInfo { get; private set; }
         public bool IsRunning => _cts is { IsCancellationRequested: false };
+        public int LatencyMs => _browser?.LatencyMs ?? -1;
 
         public int ConnectionCount
         {
             get { lock (_proxies) return _proxies.Count; }
         }
 
-        public event Action<GameInfo> GameFound;
-        public event Action GameLost;
-        public event Action<string> Notification;
-        public event Action ConnectionCountChanged;
-        public event Action Faulted;
+        public event EventHandler<GameInfo> GameFound;
+        public event EventHandler GameLost;
+        public event EventHandler<string> Notification;
+        public event EventHandler ConnectionCountChanged;
+        public event EventHandler Faulted;
 
         /// <summary>
         /// Starts the proxy service. Throws SocketException if listener fails to bind,
@@ -42,7 +44,7 @@ namespace WC3LanGame.Core
         {
             LastHostInfo = hostInfo;
             _cts = new CancellationTokenSource();
-            var token = _cts.Token;
+            _token = _cts.Token;
 
             ServerAddress = NetworkScanner.ResolveHost(hostInfo.Hostname);
             if (ServerAddress == null)
@@ -51,20 +53,23 @@ namespace WC3LanGame.Core
             _serverEndPoint = new IPEndPoint(ServerAddress, 0);
 
             // Start listener first — if this throws SocketException, let it propagate
-            _listener = new Listener(GotConnection, token);
+            _listener = new Listener(GotConnection, _token);
             _listener.Faulted += OnComponentFaulted;
             _listener.Run();
 
             // Start browser
-            _browser = new Browser(ServerAddress, _listener.LocalEndPoint.Port, hostInfo, token);
-            _browser.FoundServer += OnFoundServer;
-            _browser.QuerySent += OnQuerySent;
+            _browser = new Browser(ServerAddress, _listener.LocalEndPoint.Port, hostInfo, _token);
+            _browser.GameFound += OnGameFound;
+            _browser.GameLost += OnGameLost;
             _browser.Faulted += OnComponentFaulted;
             _browser.Run();
         }
 
         public void Dispose()
         {
+            if (_disposed) return;
+            _disposed = true;
+
             _cts?.Cancel();
 
             if (_listener != null)
@@ -79,18 +84,10 @@ namespace WC3LanGame.Core
                 _proxies.Clear();
             }
 
-            if (_foundGame && CurrentGame != null)
-            {
-                try { _browser?.SendGameCancelled((byte)CurrentGame.GameId); }
-                catch (SocketException) { }
-                catch (ObjectDisposedException) { }
-            }
-
-            // Unsubscribe events before disposing browser
             if (_browser != null)
             {
-                _browser.FoundServer -= OnFoundServer;
-                _browser.QuerySent -= OnQuerySent;
+                _browser.GameFound -= OnGameFound;
+                _browser.GameLost -= OnGameLost;
                 _browser.Faulted -= OnComponentFaulted;
             }
 
@@ -98,14 +95,13 @@ namespace WC3LanGame.Core
 
             _listener = null;
             _browser = null;
-            _foundGame = false;
             CurrentGame = null;
 
             _cts?.Dispose();
             _cts = null;
         }
 
-        private void OnFoundServer(GameInfo gameInfo)
+        private void OnGameFound(GameInfo gameInfo)
         {
             CurrentGame = gameInfo;
             lock (_serverEndPointLock)
@@ -113,40 +109,21 @@ namespace WC3LanGame.Core
                 _serverEndPoint.Port = gameInfo.Port;
             }
 
-            if (!_foundGame)
-                Notification?.Invoke("Found game: " + gameInfo.Name);
+            if (!_notifiedGameFound)
+            {
+                Notification?.Invoke(this, "Found game: " + gameInfo.Name);
+                _notifiedGameFound = true;
+            }
 
-            _foundGame = true;
-            _lastFoundServer = DateTime.Now;
-
-            GameFound?.Invoke(gameInfo);
+            GameFound?.Invoke(this, gameInfo);
         }
 
-        private void OnQuerySent()
+        private void OnGameLost()
         {
-            // We don't receive the "server cancelled" messages
-            // because they are only ever broadcast to the host's LAN.
-            if (!_foundGame)
-                return;
-
-            TimeSpan interval = DateTime.Now - _lastFoundServer;
-            if (interval.TotalSeconds > 3)
-                OnLostGame();
-        }
-
-        private void OnLostGame()
-        {
-            if (!_foundGame)
-                return;
-
-            try { _browser?.SendGameCancelled((byte)CurrentGame.GameId); }
-            catch (SocketException) { }
-            catch (ObjectDisposedException) { }
-
-            _foundGame = false;
-
-            Notification?.Invoke("Lost game");
-            GameLost?.Invoke();
+            CurrentGame = null;
+            _notifiedGameFound = false;
+            Notification?.Invoke(this, "Lost game");
+            GameLost?.Invoke(this, EventArgs.Empty);
         }
 
         private void OnComponentFaulted()
@@ -155,12 +132,12 @@ namespace WC3LanGame.Core
             if (_cts == null || _cts.IsCancellationRequested)
                 return;
 
-            Faulted?.Invoke();
+            Faulted?.Invoke(this, EventArgs.Empty);
         }
 
         private void GotConnection(Socket clientSocket)
         {
-            Notification?.Invoke($"Got a connection from {clientSocket.RemoteEndPoint}");
+            Notification?.Invoke(this, $"Got a connection from {clientSocket.RemoteEndPoint}");
 
             EndPoint serverEPSnapshot;
             lock (_serverEndPointLock)
@@ -171,7 +148,7 @@ namespace WC3LanGame.Core
                     ((IPEndPoint)_serverEndPoint).Port);
             }
 
-            TcpProxy proxy = new TcpProxy(clientSocket, serverEPSnapshot, _cts?.Token ?? CancellationToken.None);
+            TcpProxy proxy = new TcpProxy(clientSocket, serverEPSnapshot, _token);
             proxy.ProxyDisconnected += ProxyDisconnected;
             lock (_proxies) _proxies.Add(proxy);
 
@@ -182,22 +159,22 @@ namespace WC3LanGame.Core
             catch (SocketException)
             {
                 // Server unreachable — clean up this proxy
-                Notification?.Invoke("Failed to connect to game server");
+                Notification?.Invoke(this, "Failed to connect to game server");
                 lock (_proxies) _proxies.Remove(proxy);
                 proxy.Dispose();
             }
 
-            ConnectionCountChanged?.Invoke();
+            ConnectionCountChanged?.Invoke(this, EventArgs.Empty);
         }
 
         private void ProxyDisconnected(TcpProxy proxy)
         {
-            Notification?.Invoke("Client disconnected");
+            Notification?.Invoke(this, "Client disconnected");
 
             lock (_proxies) _proxies.Remove(proxy);
             proxy.Dispose();
 
-            ConnectionCountChanged?.Invoke();
+            ConnectionCountChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 }

@@ -141,7 +141,7 @@ namespace WC3LanGame.Core.Warcraft3
         }
 
         // Decode encoded string part. This algorithm is described in 3b part of GamePacketSpecs doc.
-        // Uses pre-allocated array instead of MemoryStream to avoid GC pressure on every packet.
+        // Calculates exact output size upfront to avoid a second allocation from slicing.
         private static byte[] DecodeStringPart(ReadOnlySpan<byte> data)
         {
             int firstZeroIndex = data.IndexOf((byte)0);
@@ -149,7 +149,11 @@ namespace WC3LanGame.Core.Warcraft3
                 return [];
 
             ReadOnlySpan<byte> dataCut = data[..firstZeroIndex];
-            byte[] result = new byte[dataCut.Length];
+
+            // Every 8th byte (starting at 0) is a mask byte, rest is data
+            int maskCount = (dataCut.Length + 7) / 8;
+            int decodedSize = dataCut.Length - maskCount;
+            byte[] result = new byte[decodedSize];
             int writeIndex = 0;
             byte mask = 0;
 
@@ -167,7 +171,7 @@ namespace WC3LanGame.Core.Warcraft3
                     mask = b;
             }
 
-            return result[..writeIndex];
+            return result;
         }
     }
 }

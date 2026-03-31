@@ -3,7 +3,7 @@ using System.Net.Sockets;
 
 namespace WC3LanGame.Core.Network
 {
-    internal class Listener : IDisposable
+    internal sealed class Listener : IDisposable
     {
         public IPEndPoint LocalEndPoint => (IPEndPoint)_listenSocket.LocalEndPoint;
 
@@ -15,6 +15,7 @@ namespace WC3LanGame.Core.Network
         private readonly CancellationToken _cancellationToken;
 
         private int _port;
+        private bool _disposed;
 
         private Listener(IPAddress address, int port, Action<Socket> connectionHandler, CancellationToken cancellationToken)
         {
@@ -39,7 +40,11 @@ namespace WC3LanGame.Core.Network
             _port = LocalEndPoint.Port;
             _listenSocket.Listen(20);
 
-            _ = AcceptLoopAsync();
+            Task acceptTask = AcceptLoopAsync();
+            acceptTask.ContinueWith(
+                static (_, state) => ((Listener)state).Faulted?.Invoke(),
+                this,
+                TaskContinuationOptions.OnlyOnFaulted);
         }
 
         private async Task AcceptLoopAsync()
@@ -75,6 +80,8 @@ namespace WC3LanGame.Core.Network
 
         public void Dispose()
         {
+            if (_disposed) return;
+            _disposed = true;
             try { _listenSocket?.Close(); } catch (ObjectDisposedException) { }
             _listenSocket = null;
         }

@@ -45,14 +45,12 @@ namespace WC3LanGame.Core.Network
         {
             var localIpList = GetLocalIPv4Addresses();
 
-            List<string> allNetworkClientAddresses = [];
+            List<IPAddress> allNetworkClientAddresses = [];
             foreach (var localIp in localIpList)
             {
                 string network = localIp.Address + "/" + localIp.PrefixLength;
                 var ipNetwork = IPNetwork2.Parse(network);
-                var networkClientAddresses = ipNetwork.ListIPAddress(Filter.Usable)
-                    .Select(ip => ip.ToString());
-                allNetworkClientAddresses.AddRange(networkClientAddresses);
+                allNetworkClientAddresses.AddRange(ipNetwork.ListIPAddress(Filter.Usable));
             }
 
             int totalCount = allNetworkClientAddresses.Count;
@@ -74,7 +72,7 @@ namespace WC3LanGame.Core.Network
                     using Ping ping = new();
                     PingReply reply = await ping.SendPingAsync(ip, 250);
                     if (reply.Status == IPStatus.Success)
-                        activeClients.Add(ip);
+                        activeClients.Add(ip.ToString());
 
                     int current = Interlocked.Increment(ref scannedCount);
                     progress?.Report((double)current / totalCount);

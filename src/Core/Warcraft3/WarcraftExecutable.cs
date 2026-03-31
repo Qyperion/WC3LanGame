@@ -50,15 +50,26 @@ namespace WC3LanGame.Core.Warcraft3
 
         public static bool IsWC3ProcessRunning()
         {
-            Process[] processes = Process.GetProcessesByName(Warcraft3ProcessName);
             try
             {
-                return processes.Length > 0;
+                Process[] processes = Process.GetProcessesByName(Warcraft3ProcessName);
+                try
+                {
+                    return processes.Length > 0;
+                }
+                finally
+                {
+                    foreach (Process process in processes)
+                        process.Dispose();
+                }
             }
-            finally
+            catch (Win32Exception)
             {
-                foreach (Process process in processes)
-                    process.Dispose();
+                return false;
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
             }
         }
 

@@ -1,4 +1,5 @@
-﻿using System.Net;
+﻿using System.Diagnostics;
+using System.Net;
 using System.Net.Sockets;
 using System.Timers;
 
@@ -9,7 +10,7 @@ using Timer = System.Timers.Timer;
 
 namespace WC3LanGame.Core.Network
 {
-    internal class Browser : IDisposable
+    internal sealed class Browser : IDisposable
     {
         private const ushort DefaultWarcraftPort = 6112;
         private const int GameNameOffset = 0x14;
@@ -30,11 +31,18 @@ namespace WC3LanGame.Core.Network
         private readonly Lock _queryLock = new();
         private bool _querying;
 
-        public event Action<GameInfo> FoundServer;
-        public event Action QuerySent;
-        public event Action Faulted;
-
+        private GameInfo _currentGame;
+        private bool _foundGame;
+        private DateTime _lastFoundServer;
+        private long _querySentTimestamp;
+        private bool _disposed;
         private int _consecutiveSendFailures;
+
+        public int LatencyMs { get; private set; } = -1;
+
+        public event Action<GameInfo> GameFound;
+        public event Action GameLost;
+        public event Action Faulted;
 
         public Browser(IPAddress serverAddress, int proxyPort, HostInfo hostInfo, CancellationToken cancellationToken = default)
         {
@@ -59,23 +67,34 @@ namespace WC3LanGame.Core.Network
             _queryTimer.Start();
         }
 
-        public void SendGameCancelled(byte gameId)
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            _queryTimer.Stop();
+            _queryTimer.Dispose();
+
+            if (_foundGame && _currentGame != null)
+            {
+                try { SendGameCancelled(_currentGame.GameId); }
+                catch (SocketException) { }
+                catch (ObjectDisposedException) { }
+            }
+
+            lock (_socketLock)
+            {
+                try { _browseSocket?.Close(); } catch (ObjectDisposedException) { }
+                _browseSocket = null;
+            }
+        }
+
+        private void SendGameCancelled(uint gameId)
         {
             byte[] packet = WarcraftPacketProcessor.GenerateGameCancelledPacket(gameId);
             lock (_socketLock)
             {
                 _browseSocket?.SendTo(packet, _clientEndPoint);
-            }
-        }
-
-        public void Dispose()
-        {
-            _queryTimer.Stop();
-            _queryTimer.Dispose();
-            lock (_socketLock)
-            {
-                try { _browseSocket?.Close(); } catch (ObjectDisposedException) { }
-                _browseSocket = null;
             }
         }
 
@@ -96,8 +115,11 @@ namespace WC3LanGame.Core.Network
             try
             {
                 SendQuery();
+                CheckGameLost();
 
                 foundGames = CollectResponses();
+                if (foundGames.Count > 0 && _querySentTimestamp > 0)
+                    LatencyMs = (int)Stopwatch.GetElapsedTime(_querySentTimestamp).TotalMilliseconds;
                 NotifyFoundGames(foundGames);
             }
             finally
@@ -118,6 +140,7 @@ namespace WC3LanGame.Core.Network
                     _browseSocket?.SendTo(_browsePacket, _serverEndPoint);
                 }
                 _consecutiveSendFailures = 0;
+                _querySentTimestamp = Stopwatch.GetTimestamp();
             }
             catch (SocketException)
             {
@@ -135,8 +158,6 @@ namespace WC3LanGame.Core.Network
                 Faulted?.Invoke();
                 return;
             }
-
-            QuerySent?.Invoke();
         }
 
         /// <summary>
@@ -197,7 +218,31 @@ namespace WC3LanGame.Core.Network
         private void NotifyFoundGames(List<GameInfo> games)
         {
             foreach (GameInfo game in games)
-                FoundServer?.Invoke(game);
+            {
+                _currentGame = game;
+                _foundGame = true;
+                _lastFoundServer = DateTime.Now;
+                GameFound?.Invoke(game);
+            }
+        }
+
+        private void CheckGameLost()
+        {
+            if (!_foundGame)
+                return;
+
+            TimeSpan interval = DateTime.Now - _lastFoundServer;
+            if (interval.TotalSeconds > 3)
+            {
+                try { SendGameCancelled(_currentGame.GameId); }
+                catch (SocketException) { }
+                catch (ObjectDisposedException) { }
+
+                _foundGame = false;
+                _currentGame = null;
+                LatencyMs = -1;
+                GameLost?.Invoke();
+            }
         }
 
         // Replace "Local Game" with "Proxy Game"
