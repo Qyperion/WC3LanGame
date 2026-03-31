@@ -1,10 +1,10 @@
 ﻿using System.Buffers.Binary;
 using System.Text;
 
-using WC3LanGame.Extensions;
-using WC3LanGame.Warcraft3.Types;
+using WC3LanGame.Core.Extensions;
+using WC3LanGame.Core.Warcraft3.Types;
 
-namespace WC3LanGame.Warcraft3
+namespace WC3LanGame.Core.Warcraft3
 {
     internal static class WarcraftPacketProcessor
     {

@@ -1,12 +1,12 @@
 ﻿using System.Net;
 using System.Net.Sockets;
 
-using WC3LanGame.Network;
-using WC3LanGame.Warcraft3.Types;
+using WC3LanGame.Core.Network;
+using WC3LanGame.Core.Warcraft3.Types;
 
-namespace WC3LanGame
+namespace WC3LanGame.Core
 {
-    internal class ProxyService : IDisposable
+    public class ProxyService : IDisposable
     {
         private Listener _listener;
         private Browser _browser;

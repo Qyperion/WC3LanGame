@@ -1,4 +1,4 @@
-namespace WC3LanGame
+﻿namespace WC3LanGame.App
 {
     internal static class Program
     {

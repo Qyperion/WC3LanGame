@@ -1,11 +1,11 @@
 ﻿using System.Text.Json;
 using System.Text.Json.Serialization;
 
-using WC3LanGame.Warcraft3.Types;
+using WC3LanGame.Core.Warcraft3.Types;
 
-namespace WC3LanGame
+namespace WC3LanGame.Core
 {
-    internal class AppSettings
+    public class AppSettings
     {
         private static readonly string SettingsDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -26,7 +26,7 @@ namespace WC3LanGame
         public bool AutoReconnect { get; set; }
         public bool LogExpanded { get; set; }
 
-        internal static AppSettings Load()
+        public static AppSettings Load()
         {
             try
             {
@@ -46,7 +46,7 @@ namespace WC3LanGame
             }
         }
 
-        internal void Save()
+        public void Save()
         {
             try
             {

@@ -1,8 +1,8 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 
-namespace WC3LanGame.Warcraft3.Types
+namespace WC3LanGame.Core.Warcraft3.Types
 {
-    internal enum WarcraftType : byte
+    public enum WarcraftType : byte
     {
         [Description("Reign of Chaos")]
         ReignOfChaos,

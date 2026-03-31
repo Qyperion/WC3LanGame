@@ -2,14 +2,15 @@
 using System.Net.Sockets;
 using System.Timers;
 
-using WC3LanGame.Extensions;
-using WC3LanGame.Network;
-using WC3LanGame.Warcraft3;
-using WC3LanGame.Warcraft3.Types;
+using WC3LanGame.Core;
+using WC3LanGame.Core.Extensions;
+using WC3LanGame.Core.Network;
+using WC3LanGame.Core.Warcraft3;
+using WC3LanGame.Core.Warcraft3.Types;
 
 using Timer = System.Timers.Timer;
 
-namespace WC3LanGame
+namespace WC3LanGame.App
 {
     public partial class MainForm : Form
     {
@@ -244,7 +245,7 @@ namespace WC3LanGame
 
         private async Task ScanNetworkAsync()
         {
-            _scanCts?.Cancel();
+            await _scanCts?.CancelAsync();
             _scanCts = new CancellationTokenSource();
 
             scanningNetworkLabel.Visible = true;

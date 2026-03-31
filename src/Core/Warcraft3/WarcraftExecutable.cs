@@ -3,11 +3,11 @@
 using System.ComponentModel;
 using System.Diagnostics;
 
-using WC3LanGame.Warcraft3.Types;
+using WC3LanGame.Core.Warcraft3.Types;
 
-namespace WC3LanGame.Warcraft3
+namespace WC3LanGame.Core.Warcraft3
 {
-    internal static class WarcraftExecutable
+    public static class WarcraftExecutable
     {
         private const string Warcraft3RegistryKey = @"HKEY_CURRENT_USER\Software\Blizzard Entertainment\Warcraft III";
         private const string Warcraft3ProcessName = "war3";

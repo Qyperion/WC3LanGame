@@ -3,9 +3,9 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 
-namespace WC3LanGame.Network
+namespace WC3LanGame.Core.Network
 {
-    internal static class NetworkScanner
+    public static class NetworkScanner
     {
         private const int MaxParallelPings = 50;
 

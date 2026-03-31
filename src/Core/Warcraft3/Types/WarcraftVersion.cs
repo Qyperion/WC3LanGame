@@ -1,8 +1,8 @@
 ﻿using System.ComponentModel;
 
-namespace WC3LanGame.Warcraft3.Types
+namespace WC3LanGame.Core.Warcraft3.Types
 {
-    internal enum WarcraftVersion : byte
+    public enum WarcraftVersion : byte
     {
         [Description("1.21")] V1_21 = 0x15,
         [Description("1.22")] V1_22 = 0x16,

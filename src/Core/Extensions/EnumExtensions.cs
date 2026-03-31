@@ -1,11 +1,11 @@
 ﻿using System.ComponentModel;
 using System.Reflection;
 
-using WC3LanGame.Warcraft3.Types;
+using WC3LanGame.Core.Warcraft3.Types;
 
-namespace WC3LanGame.Extensions
+namespace WC3LanGame.Core.Extensions
 {
-    internal static class EnumExtensions
+    public static class EnumExtensions
     {
         public static T GetAttribute<T>(this Enum value) where T : Attribute
         {

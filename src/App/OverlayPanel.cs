@@ -1,11 +1,7 @@
-using System.Drawing;
-using System.Windows.Forms;
-
-namespace WC3LanGame
+﻿namespace WC3LanGame.App
 {
     /// <summary>
-    /// A Panel that draws a semi-transparent dark overlay on top of
-    /// whatever the parent's BackgroundImage shows through.
+    /// A Panel that draws a semi-transparent dark overlay on top of whatever the parent's BackgroundImage shows through.
     /// Child controls with BackColor = Transparent render correctly.
     /// </summary>
     internal class OverlayPanel : Panel

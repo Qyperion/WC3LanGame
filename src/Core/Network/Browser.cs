@@ -2,12 +2,12 @@
 using System.Net.Sockets;
 using System.Timers;
 
-using WC3LanGame.Warcraft3;
-using WC3LanGame.Warcraft3.Types;
+using WC3LanGame.Core.Warcraft3;
+using WC3LanGame.Core.Warcraft3.Types;
 
 using Timer = System.Timers.Timer;
 
-namespace WC3LanGame.Network
+namespace WC3LanGame.Core.Network
 {
     internal class Browser : IDisposable
     {

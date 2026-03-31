@@ -1,4 +1,4 @@
-﻿namespace WC3LanGame
+﻿namespace WC3LanGame.App
 {
     partial class MainForm
     {
@@ -172,7 +172,7 @@
             // rescanButton
             // 
             rescanButton.Font = new Font("Segoe UI", 9F);
-            rescanButton.Location = new Point(360, 16);
+            rescanButton.Location = new Point(360, 15);
             rescanButton.Margin = new Padding(4, 5, 4, 5);
             rescanButton.Name = "rescanButton";
             rescanButton.Size = new Size(54, 50);
