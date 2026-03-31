@@ -1,4 +1,5 @@
-﻿using System.Net.Sockets;
+﻿using System.Net;
+using System.Net.Sockets;
 using System.Timers;
 
 using WC3LanGame.Extensions;
@@ -38,7 +39,13 @@ namespace WC3LanGame
             wc3VersionComboBox.Format += (_, e) =>
             {
                 if (e.ListItem is WarcraftVersion v)
-                    e.Value = v.Version();
+                    e.Value = $" {v.Version()}";
+            };
+
+            gameTypeComboBox.Format += (_, e) =>
+            {
+                if (e.ListItem is WarcraftType t)
+                    e.Value = t.Description();
             };
 
             foreach (WarcraftVersion version in Enum.GetValues<WarcraftVersion>())
@@ -62,6 +69,10 @@ namespace WC3LanGame
                 }
             }
 
+            // If no version selected yet, default to first item
+            if (wc3VersionComboBox.SelectedIndex < 0 && wc3VersionComboBox.Items.Count > 0)
+                wc3VersionComboBox.SelectedIndex = 0;
+
             foreach (WarcraftType gameType in Enum.GetValues<WarcraftType>())
                 gameTypeComboBox.Items.Add(gameType);
 
@@ -77,6 +88,9 @@ namespace WC3LanGame
 
             autoReconnectCheckBox.Checked = _settings.AutoReconnect;
 
+            hostAddressComboBox.TextChanged += (_, _) => UpdateConnectButtonState();
+            UpdateConnectButtonState();
+
             UpdateWC3RunningStatus(null, null);
             _updateWC3RunningStatusTimer.Elapsed += UpdateWC3RunningStatus;
             _updateWC3RunningStatusTimer.Start();
@@ -86,12 +100,16 @@ namespace WC3LanGame
         {
             bool wc3Running = WarcraftExecutable.IsWC3ProcessRunning();
             string wc3ProcessRunningStatus = wc3Running
-                ? "WC3 is running"
-                : "WC3 isn't running";
+                ? "\u25CF WC3 is running"
+                : "\u25CF WC3 isn't running";
+            Color statusColor = wc3Running
+                ? Color.LimeGreen
+                : Color.Gray;
 
             if (!IsHandleCreated)
             {
                 wc3ProcessRunningStatusLabel.Text = wc3ProcessRunningStatus;
+                wc3ProcessRunningStatusLabel.ForeColor = statusColor;
                 runWC3Button.Visible = !wc3Running;
                 stopWC3Button.Visible = wc3Running;
                 return;
@@ -100,6 +118,7 @@ namespace WC3LanGame
             BeginInvoke(() =>
             {
                 wc3ProcessRunningStatusLabel.Text = wc3ProcessRunningStatus;
+                wc3ProcessRunningStatusLabel.ForeColor = statusColor;
                 runWC3Button.Visible = !wc3Running;
                 stopWC3Button.Visible = wc3Running;
             });
@@ -113,7 +132,18 @@ namespace WC3LanGame
             WarcraftType gameType = (WarcraftType)gameTypeComboBox.SelectedItem;
             HostInfo hostInfo = new HostInfo(hostAddressComboBox.Text, version, gameType);
 
+            runProxyButton.Text = "Connecting...";
+            runProxyButton.Enabled = false;
+            runProxyButton.Update();
+
             RunProxy(hostInfo);
+
+            // If RunProxy failed (button still visible), restore it
+            if (runProxyButton.Visible)
+            {
+                runProxyButton.Text = "Connect";
+                UpdateConnectButtonState();
+            }
         }
 
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
@@ -122,6 +152,7 @@ namespace WC3LanGame
             _settings.Version = wc3VersionComboBox.SelectedItem as WarcraftVersion?;
             _settings.GameType = gameTypeComboBox.SelectedItem as WarcraftType?;
             _settings.AutoReconnect = autoReconnectCheckBox.Checked;
+            _settings.LogExpanded = logPanel.Visible;
             _settings.Save();
 
             _scanCts?.Cancel();
@@ -141,21 +172,23 @@ namespace WC3LanGame
             notifyIcon.ShowBalloonTip(1000, "WC3 Proxy", text, ToolTipIcon.Info);
         }
 
-        private void Log(string message)
+        private enum LogLevel { Info, Success, Warning, Error }
+
+        private void Log(string message, LogLevel level = LogLevel.Info)
         {
             string timestamp = DateTime.Now.ToString("HH:mm:ss");
             string line = $"[{timestamp}] {message}{Environment.NewLine}";
 
             if (InvokeRequired)
             {
-                BeginInvoke(() => AppendLog(line));
+                BeginInvoke(() => AppendLog(line, message, level));
                 return;
             }
 
-            AppendLog(line);
+            AppendLog(line, message, level);
         }
 
-        private void AppendLog(string line)
+        private void AppendLog(string line, string statusText, LogLevel level)
         {
             // Keep log from growing too large (max ~500 lines)
             if (logRichTextBox.Lines.Length > 500)
@@ -164,8 +197,22 @@ namespace WC3LanGame
                 logRichTextBox.SelectedText = "";
             }
 
+            Color color = level switch
+            {
+                LogLevel.Success => Color.FromArgb(0, 160, 0),
+                LogLevel.Warning => Color.FromArgb(200, 160, 0),
+                LogLevel.Error => Color.FromArgb(220, 50, 50),
+                _ => logRichTextBox.ForeColor
+            };
+
+            logRichTextBox.SelectionStart = logRichTextBox.TextLength;
+            logRichTextBox.SelectionLength = 0;
+            logRichTextBox.SelectionColor = color;
             logRichTextBox.AppendText(line);
             logRichTextBox.ScrollToCaret();
+
+            // Update status bar with latest message
+            lastLogStatusLabel.Text = statusText;
         }
 
         private void stopProxyButton_Click(object sender, EventArgs e)
@@ -189,10 +236,24 @@ namespace WC3LanGame
 
         private async void MainForm_Load(object sender, EventArgs e)
         {
+            if (_settings.LogExpanded)
+                SetLogExpanded(true);
+
+            await ScanNetworkAsync();
+        }
+
+        private async Task ScanNetworkAsync()
+        {
+            _scanCts?.Cancel();
             _scanCts = new CancellationTokenSource();
 
+            scanningNetworkLabel.Visible = true;
+            scanningNetworkProgressBar.Visible = true;
             scanningNetworkProgressBar.Minimum = 0;
             scanningNetworkProgressBar.Maximum = 1000;
+            scanningNetworkProgressBar.Value = 0;
+            rescanButton.Enabled = false;
+
             var progress = new Progress<double>(fraction =>
             {
                 scanningNetworkProgressBar.Value = (int)(fraction * 1000);
@@ -202,15 +263,42 @@ namespace WC3LanGame
             {
                 var ipList = await NetworkScanner.FindAllActiveIpInAllLocalNetworks(
                     progress, _scanCts.Token);
+
+                // Preserve current text, replace dropdown items
+                string currentText = hostAddressComboBox.Text;
+                hostAddressComboBox.Items.Clear();
                 hostAddressComboBox.Items.AddRange(ipList);
+                hostAddressComboBox.Text = currentText;
+
                 Log($"Network scan complete, found {ipList.Length} active hosts");
             }
             catch (OperationCanceledException)
             {
-                // Form closing during scan — ignore
+                // Scan cancelled — ignore
             }
+
             scanningNetworkProgressBar.Visible = false;
             scanningNetworkLabel.Visible = false;
+            rescanButton.Enabled = true;
+        }
+
+        private async void rescanButton_Click(object sender, EventArgs e)
+        {
+            await ScanNetworkAsync();
+        }
+
+        private void showLogToolStripLabel_Click(object sender, EventArgs e)
+        {
+            SetLogExpanded(!logPanel.Visible);
+        }
+
+        private void SetLogExpanded(bool expanded)
+        {
+            logPanel.Visible = expanded;
+            int contentBottom = expanded ? logPanel.Bottom : settingsPanel.Bottom;
+            int padding = logPanel.Left;
+            ClientSize = new Size(ClientSize.Width, contentBottom + padding + statusStrip.Height);
+            showLogToolStripLabel.Text = expanded ? "Hide Log \u25B2" : "Show Log \u25BC";
         }
 
         private void MainForm_Resize(object sender, EventArgs e)
@@ -218,10 +306,24 @@ namespace WC3LanGame
             ShowInTaskbar = (WindowState != FormWindowState.Minimized);
         }
 
+        private void UpdateConnectButtonState()
+        {
+            string text = hostAddressComboBox.Text.Trim();
+            runProxyButton.Enabled = !string.IsNullOrWhiteSpace(text) &&
+                (IPAddress.TryParse(text, out _) ||
+                 Uri.CheckHostName(text) != UriHostNameType.Unknown);
+        }
+
         #endregion
 
 
         #region Logic
+
+        private void UpdateConnectionStatus(string text, Color color)
+        {
+            connectionStatusLabel.Text = text;
+            connectionStatusLabel.ForeColor = color;
+        }
 
         /// <returns>true if proxy started successfully</returns>
         private bool RunProxy(HostInfo hostInfo)
@@ -236,7 +338,7 @@ namespace WC3LanGame
             {
                 _proxyService.Dispose();
                 _proxyService = null;
-                Log($"Unable to start listener: {ex.Message}");
+                Log($"Unable to start listener: {ex.Message}", LogLevel.Error);
                 if (!_reconnecting)
                     MessageBox.Show("Unable to start listener\n" + ex.Message);
                 return false;
@@ -245,7 +347,7 @@ namespace WC3LanGame
             {
                 _proxyService.Dispose();
                 _proxyService = null;
-                Log($"Error: {ex.Message}");
+                Log($"Error: {ex.Message}", LogLevel.Error);
                 if (!_reconnecting)
                     MessageBox.Show(ex.Message);
                 return false;
@@ -265,11 +367,16 @@ namespace WC3LanGame
                 : $"{hostInfo.Hostname} ({_proxyService.ServerAddress})";
 
             hostAddressValueLabel.Text = description;
-            Log($"Proxy started, connecting to {description}");
+            Log($"Proxy started, connecting to {description}", LogLevel.Success);
 
             runProxyButton.Visible = false;
             stopProxyButton.Visible = true;
             gameInfoTableLayoutPanel.Visible = true;
+            hostAddressComboBox.Enabled = false;
+            wc3VersionComboBox.Enabled = false;
+            gameTypeComboBox.Enabled = false;
+            rescanButton.Enabled = false;
+            UpdateConnectionStatus("\u25CF Searching for game...", Color.FromArgb(255, 180, 0));
             return true;
         }
 
@@ -297,14 +404,16 @@ namespace WC3LanGame
             if (userInitiated)
             {
                 Log("Proxy stopped");
+                runProxyButton.Text = "Connect";
                 runProxyButton.Visible = true;
                 stopProxyButton.Visible = false;
                 gameInfoTableLayoutPanel.Visible = false;
-                proxyActiveLabel.Visible = false;
-            }
-            else
-            {
-                proxyActiveLabel.Visible = false;
+                UpdateConnectionStatus("Not connected", Color.Gray);
+                hostAddressComboBox.Enabled = true;
+                wc3VersionComboBox.Enabled = true;
+                gameTypeComboBox.Enabled = true;
+                rescanButton.Enabled = true;
+                UpdateConnectButtonState();
             }
         }
 
@@ -316,7 +425,7 @@ namespace WC3LanGame
 
                 if (!autoReconnectCheckBox.Checked)
                 {
-                    Log("Proxy connection lost");
+                    Log("Proxy connection lost", LogLevel.Error);
                     StopProxy();
                     return;
                 }
@@ -332,7 +441,8 @@ namespace WC3LanGame
             _reconnectAttempt++;
             int delaySeconds = Math.Min(5 * _reconnectAttempt, 30);
 
-            Log($"Connection lost. Reconnecting in {delaySeconds}s (attempt {_reconnectAttempt})...");
+            Log($"Connection lost. Reconnecting in {delaySeconds}s (attempt {_reconnectAttempt})...", LogLevel.Warning);
+            UpdateConnectionStatus($"\u25CF Reconnecting ({_reconnectAttempt})...", Color.FromArgb(255, 180, 0));
 
             _reconnectTimer?.Stop();
             _reconnectTimer?.Dispose();
@@ -356,18 +466,25 @@ namespace WC3LanGame
             if (_lastHostInfo == null || !autoReconnectCheckBox.Checked)
             {
                 _reconnecting = false;
-                Log("Reconnection cancelled");
+                Log("Reconnection cancelled", LogLevel.Warning);
+                runProxyButton.Text = "Connect";
                 runProxyButton.Visible = true;
                 stopProxyButton.Visible = false;
+                hostAddressComboBox.Enabled = true;
+                wc3VersionComboBox.Enabled = true;
+                gameTypeComboBox.Enabled = true;
+                rescanButton.Enabled = true;
+                UpdateConnectButtonState();
+                UpdateConnectionStatus("Not connected", Color.Gray);
                 return;
             }
 
-            Log($"Reconnecting to {_lastHostInfo.Hostname}...");
+            Log($"Reconnecting to {_lastHostInfo.Hostname}...", LogLevel.Warning);
             if (RunProxy(_lastHostInfo))
             {
                 _reconnecting = false;
                 _reconnectAttempt = 0;
-                Log("Reconnected successfully");
+                Log("Reconnected successfully", LogLevel.Success);
             }
             else
             {
@@ -385,7 +502,7 @@ namespace WC3LanGame
                 mapNameValueLabel.Text = gameInfo.MapName;
                 mapSizeValueLabel.Text = $"{gameInfo.MapSizeCategory} ({gameInfo.MapHeight} x {gameInfo.MapWidth})";
                 playersCountValueLabel.Text = $"{gameInfo.CurrentPlayersCount} / {gameInfo.PlayerSlotsCount} / {gameInfo.SlotsCount}";
-                proxyActiveLabel.Visible = true;
+                UpdateConnectionStatus("\u25CF Game found", Color.LimeGreen);
             });
         }
 
@@ -400,7 +517,7 @@ namespace WC3LanGame
                 mapSizeValueLabel.Text = "-";
                 playersCountValueLabel.Text = "-";
                 clientCountValueLabel.Text = "-";
-                proxyActiveLabel.Visible = false;
+                UpdateConnectionStatus("\u25CF Searching for game...", Color.FromArgb(255, 180, 0));
             });
         }
 

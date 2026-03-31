@@ -24,6 +24,7 @@ namespace WC3LanGame
         public WarcraftVersion? Version { get; set; }
         public WarcraftType? GameType { get; set; }
         public bool AutoReconnect { get; set; }
+        public bool LogExpanded { get; set; }
 
         internal static AppSettings Load()
         {

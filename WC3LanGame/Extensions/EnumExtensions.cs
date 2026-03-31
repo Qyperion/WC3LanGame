@@ -20,6 +20,11 @@ namespace WC3LanGame.Extensions
 
         public static string Version(this WarcraftVersion value)
         {
+            return value.Description();
+        }
+
+        public static string Description(this Enum value)
+        {
             DescriptionAttribute attribute = value.GetAttribute<DescriptionAttribute>();
             return attribute == null ? value.ToString() : attribute.Description;
         }
