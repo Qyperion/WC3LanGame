@@ -29,6 +29,22 @@ namespace WC3LanGame.Core.Warcraft3
         // Minimum GameInfo reply: 20 (fixed header) + 2 (name null + encoded null) + 22 (fixed footer)
         private const int MinGameInfoReplyLength = 44;
 
+        // GameInfo reply header offsets
+        private const int GameIdOffset = 12;
+        private const int GameNameStartOffset = 20;
+
+        // GameInfo reply footer offsets (from end of packet)
+        private const int SlotsCountOffsetFromEnd = 22;
+        private const int CurrentPlayersOffsetFromEnd = 14;
+        private const int PlayerSlotsOffsetFromEnd = 10;
+        private const int PortOffsetFromEnd = 2;
+
+        // Decoded encoded data offsets
+        private const int MapWidthDecodedOffset = 5;
+        private const int MapHeightDecodedOffset = 7;
+        private const int MapNameDecodedOffset = 13;
+        private const int MinDecodedDataLength = 14;
+
         // Cached reversed game type identifiers (WC3 protocol stores them in reverse byte order)
         private static readonly byte[] TheFrozenThroneId = "PX3W"u8.ToArray(); // "W3XP" reversed
         private static readonly byte[] ReignOfChaosId = "3RAW"u8.ToArray();    // "WAR3" reversed
@@ -38,8 +54,10 @@ namespace WC3LanGame.Core.Warcraft3
             byte[] packet = new byte[GameCancelledPacketLength];
             packet[0] = FirstHeaderByte;
             packet[1] = GameCancelledOPCode;
+
             BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(2), GameCancelledPacketLength);
             BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(4), gameId);
+
             return packet;
         }
 
@@ -50,10 +68,12 @@ namespace WC3LanGame.Core.Warcraft3
             byte[] packet = new byte[GamePlayersChangedPacketLength];
             packet[0] = FirstHeaderByte;
             packet[1] = GamePlayersChangedOPCode;
+
             BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(2), GamePlayersChangedPacketLength);
             BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(4), game.GameId);
             BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(8), playersCount);
             BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(12), game.SlotsCount);
+
             return packet;
         }
 
@@ -71,8 +91,9 @@ namespace WC3LanGame.Core.Warcraft3
             packet[1] = QueryForLanGameOPCode;
             BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(2), QueryForLanGamePacketLength);
             gameTypeBytes.CopyTo(packet.AsSpan(4));
-            BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(8), (uint)hostInfo.Version.Id());
+            BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(8), hostInfo.Version.Id());
             // packet[12..15] = 0 (Game ID zero for broadcast) — already zeroed by new byte[]
+
             return packet;
         }
 
@@ -90,29 +111,29 @@ namespace WC3LanGame.Core.Warcraft3
             if (gameType == null)
                 return null;
 
-            uint gameId = BinaryPrimitives.ReadUInt32LittleEndian(replyPacket[12..]);
-            uint slotsCount = BinaryPrimitives.ReadUInt32LittleEndian(replyPacket[^22..]);
-            uint currentPlayersCount = BinaryPrimitives.ReadUInt32LittleEndian(replyPacket[^14..]);
-            uint playerSlotsCount = BinaryPrimitives.ReadUInt32LittleEndian(replyPacket[^10..]);
-            ushort port = BinaryPrimitives.ReadUInt16LittleEndian(replyPacket[^2..]);
+            uint gameId = BinaryPrimitives.ReadUInt32LittleEndian(replyPacket[GameIdOffset..]);
+            uint slotsCount = BinaryPrimitives.ReadUInt32LittleEndian(replyPacket[^SlotsCountOffsetFromEnd..]);
+            uint currentPlayersCount = BinaryPrimitives.ReadUInt32LittleEndian(replyPacket[^CurrentPlayersOffsetFromEnd..]);
+            uint playerSlotsCount = BinaryPrimitives.ReadUInt32LittleEndian(replyPacket[^PlayerSlotsOffsetFromEnd..]);
+            ushort port = BinaryPrimitives.ReadUInt16LittleEndian(replyPacket[^PortOffsetFromEnd..]);
 
-            string name = GetStringSegment(replyPacket[20..]);
+            string name = GetStringSegment(replyPacket[GameNameStartOffset..]);
 
-            int encodedSegmentStartIndex = 22 + Encoding.UTF8.GetByteCount(name);
+            int encodedSegmentStartIndex = GameNameStartOffset + 2 + Encoding.UTF8.GetByteCount(name);
             if (encodedSegmentStartIndex >= replyPacket.Length)
                 return null;
 
             byte[] decrypted = DecodeStringPart(replyPacket[encodedSegmentStartIndex..]);
 
             // Decoded data must contain at least: 5 bytes prefix + 2 mapWidth + 2 mapHeight + 4 bytes + mapName null
-            if (decrypted.Length < 14)
+            if (decrypted.Length < MinDecodedDataLength)
                 return null;
 
             ReadOnlySpan<byte> decryptedSpan = decrypted;
-            ushort mapWidth = BinaryPrimitives.ReadUInt16LittleEndian(decryptedSpan[5..]);
-            ushort mapHeight = BinaryPrimitives.ReadUInt16LittleEndian(decryptedSpan[7..]);
+            ushort mapWidth = BinaryPrimitives.ReadUInt16LittleEndian(decryptedSpan[MapWidthDecodedOffset..]);
+            ushort mapHeight = BinaryPrimitives.ReadUInt16LittleEndian(decryptedSpan[MapHeightDecodedOffset..]);
 
-            string mapName = GetStringSegment(decryptedSpan[13..]);
+            string mapName = GetStringSegment(decryptedSpan[MapNameDecodedOffset..]);
             string lastMapNameSegment = mapName.Split('\\').LastOrDefault();
             mapName = lastMapNameSegment ?? mapName;
 

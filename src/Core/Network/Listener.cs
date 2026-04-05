@@ -7,13 +7,14 @@ namespace WC3LanGame.Core.Network
     {
         public IPEndPoint LocalEndPoint => (IPEndPoint)_listenSocket.LocalEndPoint;
 
-        public event Action Faulted;
+        public event EventHandler Faulted;
 
         private Socket _listenSocket;
         private readonly Action<Socket> _connectionHandler;
         private readonly IPAddress _address;
         private readonly CancellationToken _cancellationToken;
 
+        private Task _acceptTask;
         private int _port;
         private bool _disposed;
 
@@ -40,9 +41,9 @@ namespace WC3LanGame.Core.Network
             _port = LocalEndPoint.Port;
             _listenSocket.Listen(20);
 
-            Task acceptTask = AcceptLoopAsync();
-            acceptTask.ContinueWith(
-                static (_, state) => ((Listener)state).Faulted?.Invoke(),
+            _acceptTask = AcceptLoopAsync();
+            _acceptTask.ContinueWith(
+                static (_, state) => ((Listener)state).Faulted?.Invoke(state, EventArgs.Empty),
                 this,
                 TaskContinuationOptions.OnlyOnFaulted);
         }
@@ -75,7 +76,7 @@ namespace WC3LanGame.Core.Network
             }
 
             if (faulted)
-                Faulted?.Invoke();
+                Faulted?.Invoke(this, EventArgs.Empty);
         }
 
         public void Dispose()
@@ -84,6 +85,7 @@ namespace WC3LanGame.Core.Network
             _disposed = true;
             try { _listenSocket?.Close(); } catch (ObjectDisposedException) { }
             _listenSocket = null;
+            try { _acceptTask?.Wait(TimeSpan.FromSeconds(2)); } catch { }
         }
     }
 }

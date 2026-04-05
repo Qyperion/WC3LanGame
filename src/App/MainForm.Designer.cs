@@ -570,7 +570,7 @@
             logPanel.Location = new Point(11, 473);
             logPanel.Margin = new Padding(4, 5, 4, 5);
             logPanel.Name = "logPanel";
-            logPanel.Size = new Size(869, 245);
+            logPanel.Size = new Size(869, 123);
             logPanel.TabIndex = 2;
             logPanel.Visible = false;
             // 
@@ -584,7 +584,7 @@
             logRichTextBox.Name = "logRichTextBox";
             logRichTextBox.ReadOnly = true;
             logRichTextBox.ScrollBars = RichTextBoxScrollBars.Vertical;
-            logRichTextBox.Size = new Size(853, 226);
+            logRichTextBox.Size = new Size(853, 104);
             logRichTextBox.TabIndex = 0;
             logRichTextBox.Text = "";
             // 

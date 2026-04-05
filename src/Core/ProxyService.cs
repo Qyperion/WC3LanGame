@@ -42,6 +42,9 @@ namespace WC3LanGame.Core
         /// </summary>
         public void Start(HostInfo hostInfo)
         {
+            if (IsRunning)
+                throw new InvalidOperationException("Proxy service is already running.");
+
             LastHostInfo = hostInfo;
             _cts = new CancellationTokenSource();
             _token = _cts.Token;
@@ -101,7 +104,7 @@ namespace WC3LanGame.Core
             _cts = null;
         }
 
-        private void OnGameFound(GameInfo gameInfo)
+        private void OnGameFound(object sender, GameInfo gameInfo)
         {
             CurrentGame = gameInfo;
             lock (_serverEndPointLock)
@@ -118,7 +121,7 @@ namespace WC3LanGame.Core
             GameFound?.Invoke(this, gameInfo);
         }
 
-        private void OnGameLost()
+        private void OnGameLost(object sender, EventArgs e)
         {
             CurrentGame = null;
             _notifiedGameFound = false;
@@ -126,7 +129,7 @@ namespace WC3LanGame.Core
             GameLost?.Invoke(this, EventArgs.Empty);
         }
 
-        private void OnComponentFaulted()
+        private void OnComponentFaulted(object sender, EventArgs e)
         {
             // Ignore if already shutting down
             if (_cts == null || _cts.IsCancellationRequested)
@@ -143,13 +146,11 @@ namespace WC3LanGame.Core
             lock (_serverEndPointLock)
             {
                 // Snapshot the current server endpoint for this connection
-                serverEPSnapshot = new IPEndPoint(
-                    ((IPEndPoint)_serverEndPoint).Address,
-                    ((IPEndPoint)_serverEndPoint).Port);
+                serverEPSnapshot = new IPEndPoint(_serverEndPoint.Address, _serverEndPoint.Port);
             }
 
             TcpProxy proxy = new TcpProxy(clientSocket, serverEPSnapshot, _token);
-            proxy.ProxyDisconnected += ProxyDisconnected;
+            proxy.ProxyDisconnected += OnProxyDisconnected;
             lock (_proxies) _proxies.Add(proxy);
 
             try
@@ -167,8 +168,9 @@ namespace WC3LanGame.Core
             ConnectionCountChanged?.Invoke(this, EventArgs.Empty);
         }
 
-        private void ProxyDisconnected(TcpProxy proxy)
+        private void OnProxyDisconnected(object sender, EventArgs e)
         {
+            TcpProxy proxy = (TcpProxy)sender;
             Notification?.Invoke(this, "Client disconnected");
 
             lock (_proxies) _proxies.Remove(proxy);

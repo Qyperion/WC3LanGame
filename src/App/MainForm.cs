@@ -17,6 +17,8 @@ namespace WC3LanGame.App
         private ProxyService _proxyService;
         private CancellationTokenSource _scanCts;
         private readonly AppSettings _settings;
+        private readonly LogManager _log;
+        private readonly ErrorProvider _hostAddressErrorProvider;
 
         private readonly Timer _updateWC3RunningStatusTimer = new(3000);
 
@@ -28,6 +30,8 @@ namespace WC3LanGame.App
         public MainForm()
         {
             InitializeComponent();
+            _log = new LogManager(logRichTextBox, lastLogStatusLabel);
+            _hostAddressErrorProvider = new ErrorProvider(components) { BlinkStyle = ErrorBlinkStyle.NeverBlink };
             _settings = AppSettings.Load();
             InitSettingsComponent();
             DarkMode.Apply(this);
@@ -168,49 +172,6 @@ namespace WC3LanGame.App
             notifyIcon.ShowBalloonTip(1000, "WC3 Proxy", text, ToolTipIcon.Info);
         }
 
-        private enum LogLevel { Info, Success, Warning, Error }
-
-        private void Log(string message, LogLevel level = LogLevel.Info)
-        {
-            string timestamp = DateTime.Now.ToString("HH:mm:ss");
-            string line = $"[{timestamp}] {message}{Environment.NewLine}";
-
-            if (InvokeRequired)
-            {
-                BeginInvoke(() => AppendLog(line, message, level));
-                return;
-            }
-
-            AppendLog(line, message, level);
-        }
-
-        private void AppendLog(string line, string statusText, LogLevel level)
-        {
-            // Keep log from growing too large (max ~500 lines)
-            if (logRichTextBox.Lines.Length > 500)
-            {
-                logRichTextBox.SelectAll();
-                logRichTextBox.SelectedText = "";
-            }
-
-            Color color = level switch
-            {
-                LogLevel.Success => Color.FromArgb(0, 160, 0),
-                LogLevel.Warning => Color.FromArgb(200, 160, 0),
-                LogLevel.Error => Color.FromArgb(220, 50, 50),
-                _ => logRichTextBox.ForeColor
-            };
-
-            logRichTextBox.SelectionStart = logRichTextBox.TextLength;
-            logRichTextBox.SelectionLength = 0;
-            logRichTextBox.SelectionColor = color;
-            logRichTextBox.AppendText(line);
-            logRichTextBox.ScrollToCaret();
-
-            // Update status bar with latest message
-            lastLogStatusLabel.Text = statusText;
-        }
-
         private void stopProxyButton_Click(object sender, EventArgs e)
         {
             StopProxy();
@@ -228,7 +189,7 @@ namespace WC3LanGame.App
                 executablePath = PromptForWarcraftExecutable();
                 if (string.IsNullOrWhiteSpace(executablePath))
                 {
-                    Log("Warcraft III executable was not selected.", LogLevel.Warning);
+                    _log.Log("Warcraft III executable was not selected.", LogLevel.Warning);
                     return;
                 }
 
@@ -238,14 +199,14 @@ namespace WC3LanGame.App
             }
 
             string message = WarcraftExecutable.RunWC3(executablePath);
-            Log(message);
+            _log.Log(message);
             Notify(message);
         }
 
         private void stopWC3Button_Click(object sender, EventArgs e)
         {
             string result = WarcraftExecutable.StopWC3ProcessRunning(_settings.WarcraftExecutablePath);
-            Log(result);
+            _log.Log(result);
             Notify(result);
         }
 
@@ -286,7 +247,7 @@ namespace WC3LanGame.App
                 hostAddressComboBox.Items.AddRange(ipList);
                 hostAddressComboBox.Text = currentText;
 
-                Log($"Network scan complete, found {ipList.Length} active hosts");
+                _log.Log($"Network scan complete, found {ipList.Length} active hosts");
             }
             catch (OperationCanceledException)
             {
@@ -319,15 +280,32 @@ namespace WC3LanGame.App
 
         private void MainForm_Resize(object sender, EventArgs e)
         {
-            ShowInTaskbar = (WindowState != FormWindowState.Minimized);
+            if (WindowState == FormWindowState.Minimized)
+            {
+                ShowInTaskbar = false;
+                notifyIcon.ShowBalloonTip(1000, "WC3 Proxy", "Minimized to system tray", ToolTipIcon.None);
+            }
+            else
+            {
+                ShowInTaskbar = true;
+            }
         }
 
         private void UpdateConnectButtonState()
         {
             string text = hostAddressComboBox.Text.Trim();
-            runProxyButton.Enabled = !string.IsNullOrWhiteSpace(text) &&
+            bool valid = !string.IsNullOrWhiteSpace(text) &&
                 (IPAddress.TryParse(text, out _) ||
                  Uri.CheckHostName(text) != UriHostNameType.Unknown);
+
+            runProxyButton.Enabled = valid;
+
+            if (string.IsNullOrWhiteSpace(text))
+                _hostAddressErrorProvider.SetError(hostAddressComboBox, "");
+            else if (!valid)
+                _hostAddressErrorProvider.SetError(hostAddressComboBox, "Enter a valid IP address or hostname");
+            else
+                _hostAddressErrorProvider.SetError(hostAddressComboBox, "");
         }
 
         private void TrySelectInstalledVersion(string executablePath)
@@ -373,6 +351,14 @@ namespace WC3LanGame.App
             connectionStatusLabel.ForeColor = color;
         }
 
+        private void UpdateTrayText()
+        {
+            int count = _proxyService?.ConnectionCount ?? 0;
+            notifyIcon.Text = count > 0
+                ? $"WC3 Proxy \u2014 {count} connection(s)"
+                : "WC3 Proxy";
+        }
+
         /// <returns>true if proxy started successfully</returns>
         private bool RunProxy(HostInfo hostInfo)
         {
@@ -386,7 +372,7 @@ namespace WC3LanGame.App
             {
                 _proxyService.Dispose();
                 _proxyService = null;
-                Log($"Unable to start listener: {ex.Message}", LogLevel.Error);
+                _log.Log($"Unable to start listener: {ex.Message}", LogLevel.Error);
                 if (!_reconnectManager.IsReconnecting)
                     MessageBox.Show("Unable to start listener\n" + ex.Message);
                 return false;
@@ -395,7 +381,7 @@ namespace WC3LanGame.App
             {
                 _proxyService.Dispose();
                 _proxyService = null;
-                Log($"Error: {ex.Message}", LogLevel.Error);
+                _log.Log($"Error: {ex.Message}", LogLevel.Error);
                 if (!_reconnectManager.IsReconnecting)
                     MessageBox.Show(ex.Message);
                 return false;
@@ -415,7 +401,7 @@ namespace WC3LanGame.App
                 : $"{hostInfo.Hostname} ({_proxyService.ServerAddress})";
 
             hostAddressValueLabel.Text = description;
-            Log($"Proxy started, connecting to {description}", LogLevel.Success);
+            _log.Log($"Proxy started, connecting to {description}", LogLevel.Success);
 
             runProxyButton.Visible = false;
             stopProxyButton.Visible = true;
@@ -446,18 +432,24 @@ namespace WC3LanGame.App
 
             if (userInitiated)
             {
-                Log("Proxy stopped");
-                runProxyButton.Text = "Connect";
-                runProxyButton.Visible = true;
-                stopProxyButton.Visible = false;
-                gameInfoTableLayoutPanel.Visible = false;
-                UpdateConnectionStatus("Not connected", Color.Gray);
-                hostAddressComboBox.Enabled = true;
-                wc3VersionComboBox.Enabled = true;
-                gameTypeComboBox.Enabled = true;
-                rescanButton.Enabled = true;
-                UpdateConnectButtonState();
+                _log.Log("Proxy stopped");
+                ResetUIToDisconnected();
             }
+        }
+
+        private void ResetUIToDisconnected()
+        {
+            runProxyButton.Text = "Connect";
+            runProxyButton.Visible = true;
+            stopProxyButton.Visible = false;
+            gameInfoTableLayoutPanel.Visible = false;
+            UpdateConnectionStatus("Not connected", Color.Gray);
+            hostAddressComboBox.Enabled = true;
+            wc3VersionComboBox.Enabled = true;
+            gameTypeComboBox.Enabled = true;
+            rescanButton.Enabled = true;
+            UpdateConnectButtonState();
+            UpdateTrayText();
         }
 
         private void ProxyService_Faulted(object sender, EventArgs e)
@@ -468,7 +460,7 @@ namespace WC3LanGame.App
 
                 if (!autoReconnectCheckBox.Checked)
                 {
-                    Log("Proxy connection lost", LogLevel.Error);
+                    _log.Log("Proxy connection lost", LogLevel.Error);
                     StopProxy();
                     return;
                 }
@@ -477,16 +469,16 @@ namespace WC3LanGame.App
             });
         }
 
-        private void ReconnectManager_ReconnectScheduled(int attempt, int delaySeconds)
+        private void ReconnectManager_ReconnectScheduled(object sender, ReconnectScheduledEventArgs e)
         {
             BeginInvoke(() =>
             {
-                Log($"Connection lost. Reconnecting in {delaySeconds}s (attempt {attempt})...", LogLevel.Warning);
-                UpdateConnectionStatus($"\u25CF Reconnecting ({attempt})...", Color.FromArgb(255, 180, 0));
+                _log.Log($"Connection lost. Reconnecting in {e.DelaySeconds}s (attempt {e.Attempt})...", LogLevel.Warning);
+                UpdateConnectionStatus($"\u25CF Reconnecting ({e.Attempt})...", Color.FromArgb(255, 180, 0));
             });
         }
 
-        private void ReconnectManager_ReconnectRequested()
+        private void ReconnectManager_ReconnectRequested(object sender, EventArgs e)
         {
             BeginInvoke(AttemptReconnect);
         }
@@ -500,24 +492,16 @@ namespace WC3LanGame.App
             if (_lastHostInfo == null || !autoReconnectCheckBox.Checked)
             {
                 _reconnectManager.Stop();
-                Log("Reconnection cancelled", LogLevel.Warning);
-                runProxyButton.Text = "Connect";
-                runProxyButton.Visible = true;
-                stopProxyButton.Visible = false;
-                hostAddressComboBox.Enabled = true;
-                wc3VersionComboBox.Enabled = true;
-                gameTypeComboBox.Enabled = true;
-                rescanButton.Enabled = true;
-                UpdateConnectButtonState();
-                UpdateConnectionStatus("Not connected", Color.Gray);
+                _log.Log("Reconnection cancelled", LogLevel.Warning);
+                ResetUIToDisconnected();
                 return;
             }
 
-            Log($"Reconnecting to {_lastHostInfo.Hostname}...", LogLevel.Warning);
+            _log.Log($"Reconnecting to {_lastHostInfo.Hostname}...", LogLevel.Warning);
             if (RunProxy(_lastHostInfo))
             {
                 _reconnectManager.OnReconnectSucceeded();
-                Log("Reconnected successfully", LogLevel.Success);
+                _log.Log("Reconnected successfully", LogLevel.Success);
             }
             else
             {
@@ -559,7 +543,7 @@ namespace WC3LanGame.App
 
         private void ProxyService_Notification(object sender, string text)
         {
-            Log(text);
+            _log.Log(text);
             BeginInvoke(() => Notify(text));
         }
 
@@ -568,6 +552,7 @@ namespace WC3LanGame.App
             BeginInvoke(() =>
             {
                 clientCountValueLabel.Text = (_proxyService?.ConnectionCount ?? 0).ToString();
+                UpdateTrayText();
             });
         }
 

@@ -1,5 +1,4 @@
-﻿using System.Collections;
-using System.Net;
+﻿using System.Net;
 using System.Net.Sockets;
 
 namespace WC3LanGame.Core.Network
@@ -16,7 +15,7 @@ namespace WC3LanGame.Core.Network
         private Thread _listenSocketsThread;
         private bool _disposed;
 
-        public event Action<TcpProxy> ProxyDisconnected;
+        public event EventHandler ProxyDisconnected;
 
         public TcpProxy(Socket clientSocket, EndPoint serverEP, CancellationToken cancellationToken = default)
         {
@@ -51,7 +50,7 @@ namespace WC3LanGame.Core.Network
                 _selectList.Clear();
                 _selectList.Add(_clientSocket);
                 _selectList.Add(_serverSocket);
-                Socket.Select((IList)_selectList, null, null, 1000000);
+                Socket.Select(_selectList, null, null, 1000000);
 
                 foreach (Socket socket in _selectList)
                 {
@@ -62,7 +61,7 @@ namespace WC3LanGame.Core.Network
                     }
                     catch (SocketException)
                     {
-                        ProxyDisconnected?.Invoke(this);
+                        if (!_disposed) ProxyDisconnected?.Invoke(this, EventArgs.Empty);
                         return;
                     }
                     catch (ObjectDisposedException)
@@ -72,7 +71,7 @@ namespace WC3LanGame.Core.Network
 
                     if (bufferLength == 0)
                     {
-                        ProxyDisconnected?.Invoke(this);
+                        if (!_disposed) ProxyDisconnected?.Invoke(this, EventArgs.Empty);
                         return;
                     }
 
@@ -83,7 +82,7 @@ namespace WC3LanGame.Core.Network
                     }
                     catch (SocketException)
                     {
-                        ProxyDisconnected?.Invoke(this);
+                        if (!_disposed) ProxyDisconnected?.Invoke(this, EventArgs.Empty);
                         return;
                     }
                     catch (ObjectDisposedException)

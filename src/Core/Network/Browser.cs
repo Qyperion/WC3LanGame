@@ -24,7 +24,6 @@ namespace WC3LanGame.Core.Network
         private readonly IPEndPoint _clientEndPoint = new(IPAddress.Broadcast, DefaultWarcraftPort);
         private readonly Timer _queryTimer = new(1000);
 
-        private readonly byte[] _bytesBuffer = new byte[512];
         private readonly int _proxyPort;
         private readonly CancellationToken _cancellationToken;
 
@@ -40,9 +39,9 @@ namespace WC3LanGame.Core.Network
 
         public int LatencyMs { get; private set; } = -1;
 
-        public event Action<GameInfo> GameFound;
-        public event Action GameLost;
-        public event Action Faulted;
+        public event EventHandler<GameInfo> GameFound;
+        public event EventHandler GameLost;
+        public event EventHandler Faulted;
 
         public Browser(IPAddress serverAddress, int proxyPort, HostInfo hostInfo, CancellationToken cancellationToken = default)
         {
@@ -100,7 +99,7 @@ namespace WC3LanGame.Core.Network
 
         private void QueryTimer_Elapsed(object sender, ElapsedEventArgs e)
         {
-            if (_cancellationToken.IsCancellationRequested)
+            if (_disposed || _cancellationToken.IsCancellationRequested)
                 return;
 
             List<GameInfo> foundGames = CollectResponses();
@@ -148,14 +147,14 @@ namespace WC3LanGame.Core.Network
                 if (_consecutiveSendFailures >= 5)
                 {
                     _queryTimer.Stop();
-                    Faulted?.Invoke();
+                    Faulted?.Invoke(this, EventArgs.Empty);
                 }
                 return;
             }
             catch (ObjectDisposedException)
             {
                 _queryTimer.Stop();
-                Faulted?.Invoke();
+                Faulted?.Invoke(this, EventArgs.Empty);
                 return;
             }
         }
@@ -167,6 +166,7 @@ namespace WC3LanGame.Core.Network
         private List<GameInfo> CollectResponses()
         {
             List<GameInfo> games = [];
+            byte[] buffer = new byte[512];
 
             lock (_socketLock)
             {
@@ -179,8 +179,8 @@ namespace WC3LanGame.Core.Network
                     byte[] packet;
                     try
                     {
-                        bufferLength = _browseSocket.Receive(_bytesBuffer);
-                        packet = _bytesBuffer[..bufferLength];
+                        bufferLength = _browseSocket.Receive(buffer);
+                        packet = buffer[..bufferLength];
                     }
                     catch (SocketException)
                     {
@@ -222,7 +222,7 @@ namespace WC3LanGame.Core.Network
                 _currentGame = game;
                 _foundGame = true;
                 _lastFoundServer = DateTime.Now;
-                GameFound?.Invoke(game);
+                GameFound?.Invoke(this, game);
             }
         }
 
@@ -241,7 +241,7 @@ namespace WC3LanGame.Core.Network
                 _foundGame = false;
                 _currentGame = null;
                 LatencyMs = -1;
-                GameLost?.Invoke();
+                GameLost?.Invoke(this, EventArgs.Empty);
             }
         }
 
