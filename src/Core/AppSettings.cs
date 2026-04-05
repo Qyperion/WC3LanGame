@@ -21,6 +21,7 @@ namespace WC3LanGame.Core
         };
 
         public string HostAddress { get; set; }
+        public string WarcraftExecutablePath { get; set; }
         public WarcraftVersion? Version { get; set; }
         public WarcraftType? GameType { get; set; }
         public bool AutoReconnect { get; set; }

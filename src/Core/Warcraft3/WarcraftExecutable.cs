@@ -2,6 +2,7 @@
 
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Security;
 
 using WC3LanGame.Core.Warcraft3.Types;
 
@@ -9,73 +10,101 @@ namespace WC3LanGame.Core.Warcraft3
 {
     public static class WarcraftExecutable
     {
-        private const string Warcraft3RegistryKey = @"HKEY_CURRENT_USER\Software\Blizzard Entertainment\Warcraft III";
-        private const string Warcraft3ProcessName = "war3";
+        // Registry sub-keys where Warcraft III installations may be registered.
+        private static readonly string[] RegistrySubKeys =
+        [
+            @"SOFTWARE\Blizzard Entertainment\Warcraft III",
+            @"SOFTWARE\WOW6432Node\Blizzard Entertainment\Warcraft III",
+        ];
 
-        public static string RunWC3(WarcraftType warcraftType)
+        private static readonly string[] ExecutableNames =
+        [
+            "Warcraft III.exe",
+            "war3.exe",
+        ];
+
+        // Known process names (without .exe) for detecting a running instance
+        private static readonly string[] ProcessNames =
+        [
+            "Warcraft III",
+            "war3",
+        ];
+
+        public static string ResolveExecutablePath(string preferredPath = null, WarcraftType? warcraftType = null)
         {
-            string programKey = warcraftType == WarcraftType.TheFrozenThrone ? "ProgramX" : "Program";
+            string resolved = NormalizeExecutablePath(preferredPath);
+            if (resolved != null)
+                return resolved;
 
-            string program = (string)Registry.GetValue(Warcraft3RegistryKey, programKey, null);
-
-            if (program == null)
+            foreach (string valueName in GetRegistryValueNames(warcraftType))
             {
-                return "Unable to locate Warcraft 3 executable";
+                foreach (string subKey in RegistrySubKeys)
+                {
+                    resolved = TryReadRegistryPath(RegistryHive.CurrentUser, subKey, valueName)
+                            ?? TryReadRegistryPath(RegistryHive.LocalMachine, subKey, valueName);
+                    if (resolved != null)
+                        return resolved;
+                }
             }
+
+            return null;
+        }
+
+        public static string RunWC3(string executablePath)
+        {
+            if (string.IsNullOrWhiteSpace(executablePath))
+                return "Unable to locate Warcraft III executable";
 
             try
             {
-                Process.Start(program);
-                return "Warcraft3 process started!";
+                ProcessStartInfo startInfo = new(executablePath);
+                string workingDirectory = Path.GetDirectoryName(executablePath);
+                if (!string.IsNullOrWhiteSpace(workingDirectory))
+                    startInfo.WorkingDirectory = workingDirectory;
+
+                Process.Start(startInfo);
+                return "Warcraft III process started!";
             }
-            catch (Win32Exception ex)
+            catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or FileNotFoundException)
             {
-                return $"Unable to launch WC3 ({program}).\nException: {ex.Message}";
-            }
-            catch (FileNotFoundException ex)
-            {
-                return $"Unable to launch WC3 ({program}).\nException: {ex.Message}";
+                return $"Unable to launch WC3 ({executablePath}).\nException: {ex.Message}";
             }
         }
 
-        public static string GetInstalledWC3Version()
+        public static string GetInstalledWC3Version(string preferredPath = null)
         {
-            string program = Registry.GetValue(Warcraft3RegistryKey, "InstallPath", null) + "\\war3.exe";
-            if (!File.Exists(program))
+            string executablePath = ResolveExecutablePath(preferredPath);
+            if (string.IsNullOrWhiteSpace(executablePath) || !File.Exists(executablePath))
                 return "";
 
-            FileVersionInfo versionInfo = FileVersionInfo.GetVersionInfo(program);
-            return $"{versionInfo.FileMajorPart}.{versionInfo.FileMinorPart}";
-        }
-
-        public static bool IsWC3ProcessRunning()
-        {
             try
             {
-                Process[] processes = Process.GetProcessesByName(Warcraft3ProcessName);
-                try
-                {
-                    return processes.Length > 0;
-                }
-                finally
-                {
-                    foreach (Process process in processes)
-                        process.Dispose();
-                }
+                FileVersionInfo versionInfo = FileVersionInfo.GetVersionInfo(executablePath);
+                return $"{versionInfo.FileMajorPart}.{versionInfo.FileMinorPart}";
             }
-            catch (Win32Exception)
+            catch (Exception e) when (e is FileNotFoundException or Win32Exception)
             {
-                return false;
-            }
-            catch (InvalidOperationException)
-            {
-                return false;
+                return "";
             }
         }
 
-        public static string StopWC3ProcessRunning()
+        public static bool IsWC3ProcessRunning(string preferredPath = null)
         {
-            Process[] processes = Process.GetProcessesByName(Warcraft3ProcessName);
+            List<Process> processes = FindWarcraftProcesses(preferredPath);
+            try
+            {
+                return processes.Count > 0;
+            }
+            finally
+            {
+                foreach (Process process in processes)
+                    process.Dispose();
+            }
+        }
+
+        public static string StopWC3ProcessRunning(string preferredPath = null)
+        {
+            List<Process> processes = FindWarcraftProcesses(preferredPath);
             try
             {
                 Process wc3Process = processes.FirstOrDefault();
@@ -90,6 +119,98 @@ namespace WC3LanGame.Core.Warcraft3
                 foreach (Process process in processes)
                     process.Dispose();
             }
+        }
+
+        private static string[] GetRegistryValueNames(WarcraftType? warcraftType) => warcraftType switch
+        {
+            WarcraftType.ReignOfChaos => ["GamePath", "Program", "ProgramX", "InstallPath"],
+            _ => ["GamePath", "ProgramX", "Program", "InstallPath"],
+        };
+
+        private static string TryReadRegistryPath(RegistryHive hive, string subKey, string valueName)
+        {
+            try
+            {
+                using RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, RegistryView.Default);
+                using RegistryKey key = baseKey.OpenSubKey(subKey);
+
+                return NormalizeExecutablePath(key?.GetValue(valueName) as string);
+            }
+            catch (Exception e) when (e is ArgumentException or IOException or UnauthorizedAccessException or SecurityException)
+            {
+                return null;
+            }
+        }
+
+        private static string NormalizeExecutablePath(string candidatePath)
+        {
+            if (string.IsNullOrWhiteSpace(candidatePath))
+                return null;
+
+            try
+            {
+                string path = Environment.ExpandEnvironmentVariables(candidatePath.Trim().Trim('"'));
+
+                if (File.Exists(path))
+                    return Path.GetFullPath(path);
+
+                return Directory.Exists(path)
+                    ? FindExecutableInDirectory(path)
+                    : null;
+            }
+            catch (Exception e) when (e is ArgumentException or IOException or NotSupportedException)
+            {
+                return null;
+            }
+        }
+
+        private static string FindExecutableInDirectory(string directoryPath)
+        {
+            foreach (string name in ExecutableNames)
+            {
+                string path = Path.Combine(directoryPath, name);
+                if (File.Exists(path))
+                    return Path.GetFullPath(path);
+            }
+
+            return null;
+        }
+
+        private static List<Process> FindWarcraftProcesses(string preferredPath)
+        {
+            HashSet<int> seen = [];
+            List<Process> result = [];
+
+            foreach (string processName in CollectProcessNames(preferredPath))
+            {
+                try
+                {
+                    foreach (Process process in Process.GetProcessesByName(processName))
+                    {
+                        if (seen.Add(process.Id))
+                        {
+                            result.Add(process);
+                            continue;
+                        }
+
+                        process.Dispose();
+                    }
+                }
+                catch (Exception e) when (e is Win32Exception or InvalidOperationException) { }
+            }
+
+            return result;
+        }
+
+        // Builds a deduplicated set of process names from known names + user-configured path.
+        private static HashSet<string> CollectProcessNames(string preferredPath)
+        {
+            HashSet<string> names = new(ProcessNames, StringComparer.OrdinalIgnoreCase);
+
+            if (!string.IsNullOrWhiteSpace(preferredPath))
+                names.Add(Path.GetFileNameWithoutExtension(preferredPath));
+
+            return names;
         }
     }
 }

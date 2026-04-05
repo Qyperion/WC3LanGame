@@ -61,15 +61,7 @@ namespace WC3LanGame.App
             }
             else
             {
-                string installedVersion = WarcraftExecutable.GetInstalledWC3Version();
-                foreach (WarcraftVersion version in Enum.GetValues<WarcraftVersion>())
-                {
-                    if (version.Version() == installedVersion)
-                    {
-                        wc3VersionComboBox.SelectedItem = version;
-                        break;
-                    }
-                }
+                TrySelectInstalledVersion(_settings.WarcraftExecutablePath);
             }
 
             // If no version selected yet, default to first item
@@ -101,7 +93,7 @@ namespace WC3LanGame.App
 
         private void UpdateWC3RunningStatus(object sender, ElapsedEventArgs e)
         {
-            bool wc3Running = WarcraftExecutable.IsWC3ProcessRunning();
+            bool wc3Running = WarcraftExecutable.IsWC3ProcessRunning(_settings.WarcraftExecutablePath);
             string wc3ProcessRunningStatus = wc3Running
                 ? "\u25CF WC3 is running"
                 : "\u25CF WC3 isn't running";
@@ -226,14 +218,33 @@ namespace WC3LanGame.App
 
         private void runWC3Button_Click(object sender, EventArgs e)
         {
-            string message = WarcraftExecutable.RunWC3((WarcraftType)gameTypeComboBox.SelectedItem);
+            WarcraftType? warcraftType = gameTypeComboBox.SelectedItem as WarcraftType?;
+            string executablePath = WarcraftExecutable.ResolveExecutablePath(
+                _settings.WarcraftExecutablePath,
+                warcraftType);
+
+            if (string.IsNullOrWhiteSpace(executablePath))
+            {
+                executablePath = PromptForWarcraftExecutable();
+                if (string.IsNullOrWhiteSpace(executablePath))
+                {
+                    Log("Warcraft III executable was not selected.", LogLevel.Warning);
+                    return;
+                }
+
+                _settings.WarcraftExecutablePath = executablePath;
+                _settings.Save();
+                TrySelectInstalledVersion(executablePath);
+            }
+
+            string message = WarcraftExecutable.RunWC3(executablePath);
             Log(message);
             Notify(message);
         }
 
         private void stopWC3Button_Click(object sender, EventArgs e)
         {
-            string result = WarcraftExecutable.StopWC3ProcessRunning();
+            string result = WarcraftExecutable.StopWC3ProcessRunning(_settings.WarcraftExecutablePath);
             Log(result);
             Notify(result);
         }
@@ -317,6 +328,38 @@ namespace WC3LanGame.App
             runProxyButton.Enabled = !string.IsNullOrWhiteSpace(text) &&
                 (IPAddress.TryParse(text, out _) ||
                  Uri.CheckHostName(text) != UriHostNameType.Unknown);
+        }
+
+        private void TrySelectInstalledVersion(string executablePath)
+        {
+            string installedVersion = WarcraftExecutable.GetInstalledWC3Version(executablePath);
+            foreach (WarcraftVersion version in Enum.GetValues<WarcraftVersion>())
+            {
+                if (version.Version() != installedVersion)
+                    continue;
+
+                wc3VersionComboBox.SelectedItem = version;
+                break;
+            }
+        }
+
+        private string PromptForWarcraftExecutable()
+        {
+            using OpenFileDialog dialog = new()
+            {
+                Title = "Select Warcraft III executable",
+                Filter = "Warcraft III executables|Warcraft III.exe;war3.exe|Executable files (*.exe)|*.exe|All files (*.*)|*.*",
+                CheckFileExists = true,
+                CheckPathExists = true,
+                Multiselect = false,
+                RestoreDirectory = true,
+                FileName = "Warcraft III.exe"
+            };
+
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+                return null;
+
+            return dialog.FileName;
         }
 
         #endregion

@@ -164,7 +164,7 @@
             hostAddressComboBox.Location = new Point(114, 17);
             hostAddressComboBox.Margin = new Padding(4, 5, 4, 5);
             hostAddressComboBox.Name = "hostAddressComboBox";
-            hostAddressComboBox.Size = new Size(234, 46);
+            hostAddressComboBox.Size = new Size(233, 46);
             hostAddressComboBox.TabIndex = 1;
             hostAddressComboBox.Text = "10.8.0.14";
             toolTip.SetToolTip(hostAddressComboBox, "IP address or hostname of the game host");
@@ -172,10 +172,10 @@
             // rescanButton
             // 
             rescanButton.Font = new Font("Segoe UI", 9F);
-            rescanButton.Location = new Point(360, 15);
+            rescanButton.Location = new Point(355, 18);
             rescanButton.Margin = new Padding(4, 5, 4, 5);
             rescanButton.Name = "rescanButton";
-            rescanButton.Size = new Size(54, 50);
+            rescanButton.Size = new Size(59, 46);
             rescanButton.TabIndex = 2;
             rescanButton.Text = "Scan";
             toolTip.SetToolTip(rescanButton, "Rescan local networks for active hosts");
