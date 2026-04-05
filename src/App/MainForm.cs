@@ -1,5 +1,7 @@
-﻿using System.Net;
+﻿using System.Drawing.Drawing2D;
+using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Timers;
 
 using WC3LanGame.Core;
@@ -26,6 +28,14 @@ namespace WC3LanGame.App
         private readonly ReconnectManager _reconnectManager = new();
         private HostInfo _lastHostInfo;
 
+        // Tray icon
+        private Icon _originalTrayIcon;
+        private Icon _currentStatusIcon;
+        private ContextMenuStrip _trayContextMenu;
+        private ToolStripMenuItem _trayShowHideItem;
+        private ToolStripMenuItem _trayConnectItem;
+        private ToolStripMenuItem _trayWC3Item;
+
 
         public MainForm()
         {
@@ -34,6 +44,7 @@ namespace WC3LanGame.App
             _hostAddressErrorProvider = new ErrorProvider(components) { BlinkStyle = ErrorBlinkStyle.NeverBlink };
             _settings = AppSettings.Load();
             InitSettingsComponent();
+            InitTrayIcon();
             DarkMode.Apply(this);
 
             _reconnectManager.ReconnectScheduled += ReconnectManager_ReconnectScheduled;
@@ -93,6 +104,80 @@ namespace WC3LanGame.App
             UpdateWC3RunningStatus(null, null);
             _updateWC3RunningStatusTimer.Elapsed += UpdateWC3RunningStatus;
             _updateWC3RunningStatusTimer.Start();
+        }
+
+        private void InitTrayIcon()
+        {
+            _originalTrayIcon = (Icon)notifyIcon.Icon.Clone();
+
+            _trayShowHideItem = new ToolStripMenuItem("Show");
+            _trayShowHideItem.Click += (_, _) => TrayMenu_ToggleWindow();
+
+            _trayConnectItem = new ToolStripMenuItem("Connect");
+            _trayConnectItem.Click += (_, _) => TrayMenu_ToggleProxy();
+
+            _trayWC3Item = new ToolStripMenuItem("Run WC3");
+            _trayWC3Item.Click += (_, _) => TrayMenu_ToggleWC3();
+
+            var exitItem = new ToolStripMenuItem("Exit");
+            exitItem.Click += (_, _) => Close();
+
+            _trayContextMenu = new ContextMenuStrip();
+            _trayContextMenu.Items.Add(_trayShowHideItem);
+            _trayContextMenu.Items.Add(new ToolStripSeparator());
+            _trayContextMenu.Items.Add(_trayConnectItem);
+            _trayContextMenu.Items.Add(_trayWC3Item);
+            _trayContextMenu.Items.Add(new ToolStripSeparator());
+            _trayContextMenu.Items.Add(exitItem);
+            _trayContextMenu.Opening += TrayContextMenu_Opening;
+            DarkMode.Apply(_trayContextMenu);
+
+            notifyIcon.ContextMenuStrip = _trayContextMenu;
+        }
+
+        private void TrayContextMenu_Opening(object sender, System.ComponentModel.CancelEventArgs e)
+        {
+            bool isVisible = WindowState != FormWindowState.Minimized && Visible;
+            _trayShowHideItem.Text = isVisible ? "Hide" : "Show";
+
+            bool proxyRunning = _proxyService?.IsRunning == true;
+            _trayConnectItem.Text = proxyRunning ? "Disconnect" : "Connect";
+            _trayConnectItem.Enabled = proxyRunning || runProxyButton.Enabled;
+
+            bool wc3Running = WarcraftExecutable.IsWC3ProcessRunning(_settings.WarcraftExecutablePath);
+            _trayWC3Item.Text = wc3Running ? "Stop WC3" : "Run WC3";
+        }
+
+        private void TrayMenu_ToggleWindow()
+        {
+            if (WindowState == FormWindowState.Minimized || !Visible)
+            {
+                Show();
+                WindowState = FormWindowState.Normal;
+                ShowInTaskbar = true;
+                Focus();
+            }
+            else
+            {
+                WindowState = FormWindowState.Minimized;
+            }
+        }
+
+        private void TrayMenu_ToggleProxy()
+        {
+            if (_proxyService?.IsRunning == true)
+                stopProxyButton_Click(this, EventArgs.Empty);
+            else
+                runProxyButton_Click(this, EventArgs.Empty);
+        }
+
+        private void TrayMenu_ToggleWC3()
+        {
+            bool wc3Running = WarcraftExecutable.IsWC3ProcessRunning(_settings.WarcraftExecutablePath);
+            if (wc3Running)
+                stopWC3Button_Click(this, EventArgs.Empty);
+            else
+                runWC3Button_Click(this, EventArgs.Empty);
         }
 
         private void UpdateWC3RunningStatus(object sender, ElapsedEventArgs e)
@@ -159,17 +244,21 @@ namespace WC3LanGame.App
             _reconnectManager.Dispose();
             _updateWC3RunningStatusTimer.Stop();
             _updateWC3RunningStatusTimer.Dispose();
+            _currentStatusIcon?.Dispose();
+            _trayContextMenu?.Dispose();
         }
 
         private void notifyIcon_MouseDoubleClick(object sender, MouseEventArgs e)
         {
+            Show();
             WindowState = FormWindowState.Normal;
+            ShowInTaskbar = true;
             Focus();
         }
 
-        private void Notify(string text)
+        private void Notify(string text, ToolTipIcon icon = ToolTipIcon.Info)
         {
-            notifyIcon.ShowBalloonTip(1000, "WC3 Proxy", text, ToolTipIcon.Info);
+            notifyIcon.ShowBalloonTip(2000, "WC3 Proxy", text, icon);
         }
 
         private void stopProxyButton_Click(object sender, EventArgs e)
@@ -283,7 +372,6 @@ namespace WC3LanGame.App
             if (WindowState == FormWindowState.Minimized)
             {
                 ShowInTaskbar = false;
-                notifyIcon.ShowBalloonTip(1000, "WC3 Proxy", "Minimized to system tray", ToolTipIcon.None);
             }
             else
             {
@@ -349,14 +437,24 @@ namespace WC3LanGame.App
         {
             connectionStatusLabel.Text = text;
             connectionStatusLabel.ForeColor = color;
+            UpdateTrayIconStatus(color == Color.Gray ? Color.Empty : color);
         }
 
         private void UpdateTrayText()
         {
+            string text;
             int count = _proxyService?.ConnectionCount ?? 0;
-            notifyIcon.Text = count > 0
-                ? $"WC3 Proxy \u2014 {count} connection(s)"
-                : "WC3 Proxy";
+            string gameName = _proxyService?.CurrentGame?.Name;
+
+            if (!string.IsNullOrEmpty(gameName))
+                text = $"WC3 Proxy \u2014 {gameName}" + (count > 0 ? $" ({count})" : "");
+            else if (_proxyService?.IsRunning == true)
+                text = "WC3 Proxy \u2014 Searching...";
+            else
+                text = "WC3 Lan Game";
+
+            // NotifyIcon.Text has a 63 character limit
+            notifyIcon.Text = text.Length > 63 ? text[..63] : text;
         }
 
         /// <returns>true if proxy started successfully</returns>
@@ -411,6 +509,7 @@ namespace WC3LanGame.App
             gameTypeComboBox.Enabled = false;
             rescanButton.Enabled = false;
             UpdateConnectionStatus("\u25CF Searching for game...", Color.FromArgb(255, 180, 0));
+            UpdateTrayText();
             return true;
         }
 
@@ -458,6 +557,8 @@ namespace WC3LanGame.App
             {
                 if (_reconnectManager.IsReconnecting) return;
 
+                Notify("Connection lost", ToolTipIcon.Warning);
+
                 if (!autoReconnectCheckBox.Checked)
                 {
                     _log.Log("Proxy connection lost", LogLevel.Error);
@@ -502,6 +603,7 @@ namespace WC3LanGame.App
             {
                 _reconnectManager.OnReconnectSucceeded();
                 _log.Log("Reconnected successfully", LogLevel.Success);
+                Notify("Reconnected successfully");
             }
             else
             {
@@ -513,6 +615,8 @@ namespace WC3LanGame.App
         {
             BeginInvoke(() =>
             {
+                bool isNewGame = gameNameValueLabel.Text == "-";
+
                 gamePortValueLabel.Text = gameInfo.Port.ToString();
                 gameNameValueLabel.Text = gameInfo.Name;
                 gameTypeValueLabel.Text = gameInfo.GameType.ToString();
@@ -523,6 +627,10 @@ namespace WC3LanGame.App
                 int latency = _proxyService?.LatencyMs ?? -1;
                 string latencyText = latency >= 0 ? $" ({latency}ms)" : "";
                 UpdateConnectionStatus($"\u25CF Game found{latencyText}", Color.LimeGreen);
+                UpdateTrayText();
+
+                if (isNewGame)
+                    Notify($"Game found: {gameInfo.Name}");
             });
         }
 
@@ -538,6 +646,7 @@ namespace WC3LanGame.App
                 playersCountValueLabel.Text = "-";
                 clientCountValueLabel.Text = "-";
                 UpdateConnectionStatus("\u25CF Searching for game...", Color.FromArgb(255, 180, 0));
+                UpdateTrayText();
             });
         }
 
@@ -554,6 +663,51 @@ namespace WC3LanGame.App
                 clientCountValueLabel.Text = (_proxyService?.ConnectionCount ?? 0).ToString();
                 UpdateTrayText();
             });
+        }
+
+        [DllImport("user32.dll", SetLastError = false)]
+        private static extern bool DestroyIcon(IntPtr handle);
+
+        private void UpdateTrayIconStatus(Color dotColor)
+        {
+            _currentStatusIcon?.Dispose();
+            _currentStatusIcon = null;
+
+            if (dotColor.IsEmpty || _originalTrayIcon == null)
+            {
+                notifyIcon.Icon = _originalTrayIcon;
+                return;
+            }
+
+            _currentStatusIcon = CreateOverlayIcon(_originalTrayIcon, dotColor);
+            notifyIcon.Icon = _currentStatusIcon;
+        }
+
+        private static Icon CreateOverlayIcon(Icon baseIcon, Color dotColor)
+        {
+            using Bitmap bmp = baseIcon.ToBitmap();
+            using Graphics g = Graphics.FromImage(bmp);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            int dotSize = Math.Max(bmp.Width / 3, 4);
+            int x = bmp.Width - dotSize - 1;
+            int y = bmp.Height - dotSize - 1;
+
+            using (var borderBrush = new SolidBrush(Color.FromArgb(30, 30, 30)))
+                g.FillEllipse(borderBrush, x - 1, y - 1, dotSize + 2, dotSize + 2);
+            using (var dotBrush = new SolidBrush(dotColor))
+                g.FillEllipse(dotBrush, x, y, dotSize, dotSize);
+
+            IntPtr hIcon = bmp.GetHicon();
+            try
+            {
+                using var tempIcon = Icon.FromHandle(hIcon);
+                return (Icon)tempIcon.Clone();
+            }
+            finally
+            {
+                DestroyIcon(hIcon);
+            }
         }
 
         #endregion

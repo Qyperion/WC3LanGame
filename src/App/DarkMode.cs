@@ -28,6 +28,15 @@ namespace WC3LanGame.App
             ApplyToControl(form);
         }
 
+        public static void Apply(ToolStrip toolStrip)
+        {
+            toolStrip.BackColor = StripBackground;
+            toolStrip.ForeColor = StripForeground;
+            toolStrip.Renderer = new DarkToolStripRenderer();
+            foreach (ToolStripItem item in toolStrip.Items)
+                item.ForeColor = StripForeground;
+        }
+
         private static void EnableDarkTitleBar(IntPtr handle)
         {
             int value = 1;
@@ -73,6 +82,42 @@ namespace WC3LanGame.App
             {
                 using var brush = new SolidBrush(StripBackground);
                 e.Graphics.FillRectangle(brush, e.AffectedBounds);
+            }
+
+            protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+            {
+                if (e.Item.Selected || e.Item.Pressed)
+                {
+                    using var brush = new SolidBrush(Color.FromArgb(60, 60, 65));
+                    e.Graphics.FillRectangle(brush, e.Item.ContentRectangle);
+                }
+            }
+
+            protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
+            {
+                using var bgBrush = new SolidBrush(StripBackground);
+                e.Graphics.FillRectangle(bgBrush, 0, 0, e.Item.Width, e.Item.Height);
+                int y = e.Item.Height / 2;
+                using var pen = new Pen(Color.FromArgb(70, 70, 75));
+                e.Graphics.DrawLine(pen, 4, y, e.Item.Width - 4, y);
+            }
+
+            protected override void OnRenderImageMargin(ToolStripRenderEventArgs e)
+            {
+                using var brush = new SolidBrush(StripBackground);
+                e.Graphics.FillRectangle(brush, e.AffectedBounds);
+            }
+
+            protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
+            {
+                if (e.ToolStrip is ContextMenuStrip or ToolStripDropDownMenu)
+                {
+                    using var pen = new Pen(Color.FromArgb(70, 70, 75));
+                    var bounds = e.AffectedBounds;
+                    e.Graphics.DrawRectangle(pen, 0, 0, bounds.Width - 1, bounds.Height - 1);
+                    return;
+                }
+                base.OnRenderToolStripBorder(e);
             }
         }
 
