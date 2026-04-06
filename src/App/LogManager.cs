@@ -37,6 +37,8 @@
             if (_richTextBox.IsDisposed)
                 return;
 
+            ThemePalette palette = ThemePalette.Current;
+
             if (_richTextBox.Lines.Length > MaxLogLines)
             {
                 _richTextBox.SelectAll();
@@ -45,9 +47,9 @@
 
             Color color = level switch
             {
-                LogLevel.Success => Color.FromArgb(0, 160, 0),
-                LogLevel.Warning => Color.FromArgb(200, 160, 0),
-                LogLevel.Error => Color.FromArgb(220, 50, 50),
+                LogLevel.Success => palette.LogSuccess,
+                LogLevel.Warning => palette.LogWarning,
+                LogLevel.Error => palette.LogError,
                 _ => _richTextBox.ForeColor
             };
 

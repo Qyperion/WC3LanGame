@@ -565,7 +565,6 @@
             // 
             // logPanel
             // 
-            logPanel.BackColor = Color.FromArgb(20, 20, 30);
             logPanel.Controls.Add(logRichTextBox);
             logPanel.Location = new Point(11, 473);
             logPanel.Margin = new Padding(4, 5, 4, 5);
@@ -576,9 +575,7 @@
             // 
             // logRichTextBox
             // 
-            logRichTextBox.BackColor = Color.FromArgb(30, 30, 30);
             logRichTextBox.Font = new Font("Consolas", 9F);
-            logRichTextBox.ForeColor = Color.FromArgb(220, 220, 220);
             logRichTextBox.Location = new Point(7, 8);
             logRichTextBox.Margin = new Padding(4, 5, 4, 5);
             logRichTextBox.Name = "logRichTextBox";
@@ -609,13 +606,10 @@
             // 
             // showLogToolStripLabel
             // 
-            showLogToolStripLabel.ActiveLinkColor = Color.White;
             showLogToolStripLabel.IsLink = true;
-            showLogToolStripLabel.LinkColor = Color.FromArgb(180, 200, 255);
             showLogToolStripLabel.Name = "showLogToolStripLabel";
             showLogToolStripLabel.Size = new Size(112, 25);
             showLogToolStripLabel.Text = "Show Log ▼";
-            showLogToolStripLabel.VisitedLinkColor = Color.FromArgb(180, 200, 255);
             showLogToolStripLabel.Click += showLogToolStripLabel_Click;
             // 
             // notifyIcon

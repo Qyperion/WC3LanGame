@@ -40,15 +40,46 @@ namespace WC3LanGame.App
         public MainForm()
         {
             InitializeComponent();
+            ApplyThemeColors();
             _log = new LogManager(logRichTextBox, lastLogStatusLabel);
             _hostAddressErrorProvider = new ErrorProvider(components) { BlinkStyle = ErrorBlinkStyle.NeverBlink };
             _settings = AppSettings.Load();
             InitSettingsComponent();
             InitTrayIcon();
-            DarkMode.Apply(this);
 
             _reconnectManager.ReconnectScheduled += ReconnectManager_ReconnectScheduled;
             _reconnectManager.ReconnectRequested += ReconnectManager_ReconnectRequested;
+        }
+
+        private void ApplyThemeColors()
+        {
+            ThemePalette palette = ThemePalette.Current;
+
+            hostLabel.ForeColor = palette.PrimaryText;
+            scanningNetworkLabel.ForeColor = palette.PrimaryText;
+            versionLabel.ForeColor = palette.PrimaryText;
+            gameLabel.ForeColor = palette.PrimaryText;
+            autoReconnectCheckBox.ForeColor = palette.PrimaryText;
+
+            hostAddressTitleLabel.ForeColor = palette.SecondaryText;
+            gamePortTitleLabel.ForeColor = palette.SecondaryText;
+            gameTypeTitleLabel.ForeColor = palette.SecondaryText;
+            gameNameTitleLabel.ForeColor = palette.SecondaryText;
+            mapNameTitleLabel.ForeColor = palette.SecondaryText;
+            mapSizeTitleLabel.ForeColor = palette.SecondaryText;
+            playersCountTitleLabel.ForeColor = palette.SecondaryText;
+            clientCountTitleLabel.ForeColor = palette.SecondaryText;
+
+            hostAddressValueLabel.ForeColor = palette.PrimaryText;
+            gamePortValueLabel.ForeColor = palette.PrimaryText;
+            gameTypeValueLabel.ForeColor = palette.PrimaryText;
+            gameNameValueLabel.ForeColor = palette.PrimaryText;
+            mapNameValueLabel.ForeColor = palette.PrimaryText;
+            mapSizeValueLabel.ForeColor = palette.PrimaryText;
+            playersCountValueLabel.ForeColor = palette.PrimaryText;
+            clientCountValueLabel.ForeColor = palette.PrimaryText;
+
+            connectionStatusLabel.ForeColor = palette.InactiveStatus;
         }
 
         #region Controls
@@ -130,7 +161,6 @@ namespace WC3LanGame.App
             _trayContextMenu.Items.Add(new ToolStripSeparator());
             _trayContextMenu.Items.Add(exitItem);
             _trayContextMenu.Opening += TrayContextMenu_Opening;
-            DarkMode.Apply(_trayContextMenu);
 
             notifyIcon.ContextMenuStrip = _trayContextMenu;
         }
@@ -182,13 +212,14 @@ namespace WC3LanGame.App
 
         private void UpdateWC3RunningStatus(object sender, ElapsedEventArgs e)
         {
+            ThemePalette palette = ThemePalette.Current;
             bool wc3Running = WarcraftExecutable.IsWC3ProcessRunning(_settings.WarcraftExecutablePath);
             string wc3ProcessRunningStatus = wc3Running
                 ? "\u25CF WC3 is running"
                 : "\u25CF WC3 isn't running";
             Color statusColor = wc3Running
-                ? Color.LimeGreen
-                : Color.Gray;
+                ? palette.StatusSuccess
+                : palette.InactiveStatus;
 
             if (!IsHandleCreated)
             {
@@ -437,7 +468,7 @@ namespace WC3LanGame.App
         {
             connectionStatusLabel.Text = text;
             connectionStatusLabel.ForeColor = color;
-            UpdateTrayIconStatus(color == Color.Gray ? Color.Empty : color);
+            UpdateTrayIconStatus(color == ThemePalette.Current.InactiveStatus ? Color.Empty : color);
         }
 
         private void UpdateTrayText()
@@ -460,6 +491,7 @@ namespace WC3LanGame.App
         /// <returns>true if proxy started successfully</returns>
         private bool RunProxy(HostInfo hostInfo)
         {
+            ThemePalette palette = ThemePalette.Current;
             _proxyService = new ProxyService();
 
             try
@@ -508,7 +540,7 @@ namespace WC3LanGame.App
             wc3VersionComboBox.Enabled = false;
             gameTypeComboBox.Enabled = false;
             rescanButton.Enabled = false;
-            UpdateConnectionStatus("\u25CF Searching for game...", Color.FromArgb(255, 180, 0));
+            UpdateConnectionStatus("\u25CF Searching for game...", palette.StatusAttention);
             UpdateTrayText();
             return true;
         }
@@ -542,7 +574,7 @@ namespace WC3LanGame.App
             runProxyButton.Visible = true;
             stopProxyButton.Visible = false;
             gameInfoTableLayoutPanel.Visible = false;
-            UpdateConnectionStatus("Not connected", Color.Gray);
+            UpdateConnectionStatus("Not connected", ThemePalette.Current.InactiveStatus);
             hostAddressComboBox.Enabled = true;
             wc3VersionComboBox.Enabled = true;
             gameTypeComboBox.Enabled = true;
@@ -575,7 +607,7 @@ namespace WC3LanGame.App
             BeginInvoke(() =>
             {
                 _log.Log($"Connection lost. Reconnecting in {e.DelaySeconds}s (attempt {e.Attempt})...", LogLevel.Warning);
-                UpdateConnectionStatus($"\u25CF Reconnecting ({e.Attempt})...", Color.FromArgb(255, 180, 0));
+                UpdateConnectionStatus($"\u25CF Reconnecting ({e.Attempt})...", ThemePalette.Current.StatusAttention);
             });
         }
 
@@ -626,7 +658,7 @@ namespace WC3LanGame.App
 
                 int latency = _proxyService?.LatencyMs ?? -1;
                 string latencyText = latency >= 0 ? $" ({latency}ms)" : "";
-                UpdateConnectionStatus($"\u25CF Game found{latencyText}", Color.LimeGreen);
+                UpdateConnectionStatus($"\u25CF Game found{latencyText}", ThemePalette.Current.StatusSuccess);
                 UpdateTrayText();
 
                 if (isNewGame)
@@ -645,7 +677,7 @@ namespace WC3LanGame.App
                 mapSizeValueLabel.Text = "-";
                 playersCountValueLabel.Text = "-";
                 clientCountValueLabel.Text = "-";
-                UpdateConnectionStatus("\u25CF Searching for game...", Color.FromArgb(255, 180, 0));
+                UpdateConnectionStatus("\u25CF Searching for game...", ThemePalette.Current.StatusAttention);
                 UpdateTrayText();
             });
         }
@@ -685,6 +717,7 @@ namespace WC3LanGame.App
 
         private static Icon CreateOverlayIcon(Icon baseIcon, Color dotColor)
         {
+            ThemePalette palette = ThemePalette.Current;
             using Bitmap bmp = baseIcon.ToBitmap();
             using Graphics g = Graphics.FromImage(bmp);
             g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -693,7 +726,7 @@ namespace WC3LanGame.App
             int x = bmp.Width - dotSize - 1;
             int y = bmp.Height - dotSize - 1;
 
-            using (var borderBrush = new SolidBrush(Color.FromArgb(30, 30, 30)))
+            using (var borderBrush = new SolidBrush(palette.TrayIconBorder))
                 g.FillEllipse(borderBrush, x - 1, y - 1, dotSize + 2, dotSize + 2);
             using (var dotBrush = new SolidBrush(dotColor))
                 g.FillEllipse(dotBrush, x, y, dotSize, dotSize);
