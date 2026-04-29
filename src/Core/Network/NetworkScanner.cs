@@ -44,13 +44,15 @@ public static class NetworkScanner
         IProgress<double> progress = null, CancellationToken cancellationToken = default)
     {
         var localIpList = GetLocalIPv4Addresses();
+        var localIpAddresses = localIpList.Select(ip => ip.Address).ToList();
 
         List<IPAddress> allNetworkClientAddresses = [];
         foreach (var localIp in localIpList)
         {
             var network = localIp.Address + "/" + localIp.PrefixLength;
             var ipNetwork = IPNetwork2.Parse(network);
-            allNetworkClientAddresses.AddRange(ipNetwork.ListIPAddress(Filter.Usable));
+            allNetworkClientAddresses.AddRange(ipNetwork.ListIPAddress(Filter.Usable)
+                .Where(ip => !localIpAddresses.Contains(ip)));
         }
 
         var totalCount = allNetworkClientAddresses.Count;
