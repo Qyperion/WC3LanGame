@@ -98,9 +98,9 @@ jobs:
           $tag = $env:RELEASE_TAG
 
           git fetch --tags --force
-          git rev-parse -q --verify "refs/tags/$tag" *> $null
+          $existingTags = @(git tag --list $tag)
 
-          if ($LASTEXITCODE -eq 0) {
+          if ($existingTags -contains $tag) {
             "exists=true" >> $env:GITHUB_OUTPUT
             Write-Host "Tag $tag already exists. Release will be skipped."
           } else {
