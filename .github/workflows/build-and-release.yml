@@ -1,0 +1,177 @@
+name: Build and Release
+
+on:
+  push:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_VERSION: 10.0.x
+  SOLUTION_PATH: WC3LanGame.slnx
+  APP_PROJECT: src/App/App.csproj
+  RUNTIME_ID: win-x64
+
+jobs:
+  build:
+    name: Build
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore $env:SOLUTION_PATH -p:SelfContained=false
+
+      - name: Build
+        shell: pwsh
+        run: dotnet build $env:SOLUTION_PATH --configuration Release --no-restore -p:SelfContained=false
+
+  release:
+    name: Release
+    needs: build
+    if: github.ref == 'refs/heads/master'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Read project version
+        id: project
+        shell: pwsh
+        run: |
+          [xml]$project = Get-Content $env:APP_PROJECT -Raw
+          $version = ([string]($project.Project.PropertyGroup.Version | Select-Object -First 1)).Trim()
+          $targetFramework = ([string]($project.Project.PropertyGroup.TargetFramework | Select-Object -First 1)).Trim()
+
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "Version is missing in $env:APP_PROJECT"
+          }
+
+          if ([string]::IsNullOrWhiteSpace($targetFramework)) {
+            throw "TargetFramework is missing in $env:APP_PROJECT"
+          }
+
+          if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$') {
+            throw "Version '$version' must be a safe semantic version like 2.0.0 or 2.0.0-beta.1"
+          }
+
+          if ($targetFramework -notmatch '^net(?<major>\d+)\.') {
+            throw "Cannot determine .NET major version from TargetFramework '$targetFramework'"
+          }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$version" >> $env:GITHUB_OUTPUT
+          "dotnet_major=$($Matches.major)" >> $env:GITHUB_OUTPUT
+
+      - name: Check whether release tag exists
+        id: tag
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ steps.project.outputs.tag }}
+        run: |
+          $tag = $env:RELEASE_TAG
+
+          git fetch --tags --force
+          git rev-parse -q --verify "refs/tags/$tag" *> $null
+
+          if ($LASTEXITCODE -eq 0) {
+            "exists=true" >> $env:GITHUB_OUTPUT
+            Write-Host "Tag $tag already exists. Release will be skipped."
+          } else {
+            "exists=false" >> $env:GITHUB_OUTPUT
+            Write-Host "Tag $tag does not exist. Release will be created."
+          }
+
+      - name: Publish Windows executables
+        if: steps.tag.outputs.exists == 'false'
+        shell: pwsh
+        env:
+          DOTNET_MAJOR: ${{ steps.project.outputs.dotnet_major }}
+        run: |
+          $publishRoot = Join-Path $env:GITHUB_WORKSPACE "artifacts\publish"
+          $releaseRoot = Join-Path $env:GITHUB_WORKSPACE "artifacts\release"
+          $frameworkDependentOutput = Join-Path $publishRoot "framework-dependent"
+          $selfContainedOutput = Join-Path $publishRoot "self-contained"
+          $integratedAssetName = "WC3LanGame.NET.$env:DOTNET_MAJOR.integrated.exe"
+
+          dotnet publish $env:APP_PROJECT `
+            --configuration Release `
+            --runtime $env:RUNTIME_ID `
+            --self-contained false `
+            -p:SelfContained=false `
+            -p:PublishSelfContained=false `
+            -p:PublishSingleFile=true `
+            -p:UseAppHost=true `
+            -p:DebugType=None `
+            -p:DebugSymbols=false `
+            --output $frameworkDependentOutput
+
+          dotnet publish $env:APP_PROJECT `
+            --configuration Release `
+            --runtime $env:RUNTIME_ID `
+            --self-contained true `
+            -p:SelfContained=true `
+            -p:PublishSelfContained=true `
+            -p:PublishSingleFile=true `
+            -p:DebugType=None `
+            -p:DebugSymbols=false `
+            --output $selfContainedOutput
+
+          New-Item -ItemType Directory -Force -Path $releaseRoot | Out-Null
+          Copy-Item (Join-Path $frameworkDependentOutput "WC3LanGame.App.exe") (Join-Path $releaseRoot "WC3LanGame.exe") -Force
+          Copy-Item (Join-Path $selfContainedOutput "WC3LanGame.App.exe") (Join-Path $releaseRoot $integratedAssetName) -Force
+
+      - name: Create GitHub release
+        if: steps.tag.outputs.exists == 'false'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.project.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.project.outputs.version }}
+          DOTNET_MAJOR: ${{ steps.project.outputs.dotnet_major }}
+        run: |
+          $tag = $env:RELEASE_TAG
+          $version = $env:RELEASE_VERSION
+          $dotnetMajor = $env:DOTNET_MAJOR
+          $releaseRoot = Join-Path $env:GITHUB_WORKSPACE "artifacts\release"
+          $notesPath = Join-Path $env:GITHUB_WORKSPACE "artifacts\release-notes.md"
+          $frameworkDependentAsset = Join-Path $releaseRoot "WC3LanGame.exe"
+          $integratedAsset = Join-Path $releaseRoot "WC3LanGame.NET.$dotnetMajor.integrated.exe"
+
+          @"
+          WC3LanGame.exe needs the installed .NET $dotnetMajor Desktop Runtime to run.
+
+          WC3LanGame.NET.$dotnetMajor.integrated.exe includes .NET and does not require an installed runtime, but it is much larger.
+          "@ | Set-Content -Path $notesPath
+
+          gh release create $tag `
+            $frameworkDependentAsset `
+            $integratedAsset `
+            --target $env:GITHUB_SHA `
+            --title "$version Release" `
+            --notes-file $notesPath
+
+      - name: Skip existing release
+        if: steps.tag.outputs.exists == 'true'
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.project.outputs.version }}
+        run: Write-Host "Release $env:RELEASE_VERSION already exists. Nothing to publish."
