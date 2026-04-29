@@ -3,62 +3,61 @@ using System.Text.Json.Serialization;
 
 using WC3LanGame.Core.Warcraft3.Types;
 
-namespace WC3LanGame.Core
+namespace WC3LanGame.Core;
+
+public class AppSettings
 {
-    public class AppSettings
+    private static readonly string SettingsDirectory = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "WC3LanGame");
+
+    private static readonly string SettingsFilePath = Path.Combine(
+        SettingsDirectory, "settings.json");
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        private static readonly string SettingsDirectory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "WC3LanGame");
+        WriteIndented = true,
+        Converters = { new JsonStringEnumConverter() }
+    };
 
-        private static readonly string SettingsFilePath = Path.Combine(
-            SettingsDirectory, "settings.json");
+    public string HostAddress { get; set; }
+    public string WarcraftExecutablePath { get; set; }
+    public WarcraftVersion? Version { get; set; }
+    public WarcraftType? GameType { get; set; }
+    public bool AutoReconnect { get; set; }
+    public bool LogExpanded { get; set; }
 
-        private static readonly JsonSerializerOptions JsonOptions = new()
+    public static AppSettings Load()
+    {
+        try
         {
-            WriteIndented = true,
-            Converters = { new JsonStringEnumConverter() }
-        };
-
-        public string HostAddress { get; set; }
-        public string WarcraftExecutablePath { get; set; }
-        public WarcraftVersion? Version { get; set; }
-        public WarcraftType? GameType { get; set; }
-        public bool AutoReconnect { get; set; }
-        public bool LogExpanded { get; set; }
-
-        public static AppSettings Load()
-        {
-            try
-            {
-                if (!File.Exists(SettingsFilePath))
-                    return new AppSettings();
-
-                string json = File.ReadAllText(SettingsFilePath);
-                return JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new AppSettings();
-            }
-            catch (JsonException)
-            {
+            if (!File.Exists(SettingsFilePath))
                 return new AppSettings();
-            }
-            catch (IOException)
-            {
-                return new AppSettings();
-            }
+
+            var json = File.ReadAllText(SettingsFilePath);
+            return JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new AppSettings();
         }
-
-        public void Save()
+        catch (JsonException)
         {
-            try
-            {
-                Directory.CreateDirectory(SettingsDirectory);
-                string json = JsonSerializer.Serialize(this, JsonOptions);
-                File.WriteAllText(SettingsFilePath, json);
-            }
-            catch (IOException)
-            {
-                // Settings save is best-effort — don't crash if disk is unavailable
-            }
+            return new AppSettings();
+        }
+        catch (IOException)
+        {
+            return new AppSettings();
+        }
+    }
+
+    public void Save()
+    {
+        try
+        {
+            Directory.CreateDirectory(SettingsDirectory);
+            var json = JsonSerializer.Serialize(this, JsonOptions);
+            File.WriteAllText(SettingsFilePath, json);
+        }
+        catch (IOException)
+        {
+            // Settings save is best-effort — don't crash if disk is unavailable
         }
     }
 }

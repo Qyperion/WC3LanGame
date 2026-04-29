@@ -30,10 +30,92 @@ dotnet_sort_system_directives_first = false
 dotnet_style_namespace_match_folder = true
 dotnet_diagnostic.IDE0130.severity = error
 
-# Use argumnet exception throw helpers
+# Namespace declarations
+csharp_style_namespace_declarations = file_scoped:warning
+
+
+#### C# Style Preferences ####
+
+# Collection expressions — IDE0028, IDE0300, IDE0301, IDE0302, IDE0303, IDE0304, IDE0305
+dotnet_style_prefer_collection_expression = when_types_exactly_match:warning
+dotnet_diagnostic.IDE0305.severity = none
+
+# Pattern matching — IDE0019, IDE0020, IDE0038, IDE0066, IDE0083, IDE0170
+csharp_style_prefer_not_pattern = true:warning
+csharp_style_prefer_extended_property_pattern = true:suggestion
+
+# Switch expression — IDE0066
+csharp_style_prefer_switch_expression = true:suggestion
+
+#### Expression-Level Preferences ####
+
+# Use object/collection initializers
+dotnet_style_object_initializer = true:warning
+dotnet_style_collection_initializer = true:warning
+
+# Use conditional expression
+dotnet_style_prefer_conditional_expression_over_assignment = true:suggestion
+
+# Use compound assignment
+dotnet_style_prefer_compound_assignment = true:warning
+
+# Use simplified interpolation
+dotnet_style_prefer_simplified_interpolation = true:warning
+
+# Use tuple names
+dotnet_style_explicit_tuple_names = true:warning
+
+
+#### Null-Checking Preferences ####
+
+# Use throw expression
+csharp_style_throw_expression = true:warning
+
+# Use null propagation
+dotnet_style_null_propagation = true:warning
+
+# Use argument exception throw helpers (CA1510-CA1513)
 dotnet_diagnostic.CA1510.severity = warning
 dotnet_diagnostic.CA1511.severity = warning
 dotnet_diagnostic.CA1512.severity = warning
-dotnet_diagnostic.IDE0290.severity = none
+dotnet_diagnostic.CA1513.severity = warning
 
-csharp_style_namespace_declarations = block_scoped:warning
+#### Modifier Preferences ####
+
+# Accessibility modifiers
+dotnet_style_require_accessibility_modifiers = for_non_interface_members:warning
+
+#### Unnecessary Code ####
+
+# Remove unnecessary cast — IDE0004
+dotnet_diagnostic.IDE0004.severity = warning
+
+# Remove unnecessary import — IDE0005
+dotnet_diagnostic.IDE0005.severity = warning
+
+# Remove unreachable code — IDE0035
+dotnet_diagnostic.IDE0035.severity = warning
+
+# Use expression body for methods
+dotnet_diagnostic.IDE0022.severity = none
+
+# Use index/range operators — IDE0056, IDE0057
+csharp_style_prefer_index_operator = true:suggestion
+csharp_style_prefer_range_operator = true:suggestion
+
+# Use simple 'using' statement — IDE0063
+csharp_prefer_simple_using_statement = true:suggestion
+
+#### Formatting ####
+
+csharp_prefer_braces = false
+
+# Indentation
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+
+# Spacing
+csharp_space_after_keywords_in_control_flow_statements = true
+csharp_space_between_method_call_parameter_list_parentheses = false
+csharp_space_between_method_declaration_parameter_list_parentheses = false
+csharp_space_between_parentheses = false

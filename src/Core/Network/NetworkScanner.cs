@@ -3,87 +3,86 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 
-namespace WC3LanGame.Core.Network
+namespace WC3LanGame.Core.Network;
+
+public static class NetworkScanner
 {
-    public static class NetworkScanner
+    private const int MaxParallelPings = 50;
+
+    public static IPAddress ResolveHost(string host)
     {
-        private const int MaxParallelPings = 50;
+        if (string.IsNullOrWhiteSpace(host))
+            return null;
 
-        public static IPAddress ResolveHost(string host)
+        if (IPAddress.TryParse(host, out var ipAddress))
+            return ipAddress;
+
+        try
         {
-            if (string.IsNullOrWhiteSpace(host))
-                return null;
+            return Dns.GetHostEntry(host).AddressList.FirstOrDefault();
+        }
+        catch (SocketException) // No such host is known
+        {
+            return null;
+        }
+    }
 
-            if (IPAddress.TryParse(host, out var ipAddress))
-                return ipAddress;
+    public static List<UnicastIPAddressInformation> GetLocalIPv4Addresses()
+    {
+        return NetworkInterface.GetAllNetworkInterfaces()
+            .Where(inter => inter.OperationalStatus == OperationalStatus.Up)
+            .SelectMany(inter => inter.GetIPProperties().UnicastAddresses)
+            .Where(address => address.Address.AddressFamily == AddressFamily.InterNetwork && address.PrefixLength >= 24)
+            .ToList();
+    }
 
-            try
-            {
-                return Dns.GetHostEntry(host).AddressList.FirstOrDefault();
-            }
-            catch (SocketException) // No such host is known
-            {
-                return null;
-            }
+    /// <summary>
+    /// Scans all local networks in parallel and returns active IP addresses.
+    /// Reports progress via optional IProgress (value 0.0 to 1.0).
+    /// </summary>
+    public static async Task<string[]> FindAllActiveIpInAllLocalNetworks(
+        IProgress<double> progress = null, CancellationToken cancellationToken = default)
+    {
+        var localIpList = GetLocalIPv4Addresses();
+
+        List<IPAddress> allNetworkClientAddresses = [];
+        foreach (var localIp in localIpList)
+        {
+            var network = localIp.Address + "/" + localIp.PrefixLength;
+            var ipNetwork = IPNetwork2.Parse(network);
+            allNetworkClientAddresses.AddRange(ipNetwork.ListIPAddress(Filter.Usable));
         }
 
-        public static List<UnicastIPAddressInformation> GetLocalIPv4Addresses()
+        var totalCount = allNetworkClientAddresses.Count;
+        if (totalCount == 0)
+            return [];
+
+        var scannedCount = 0;
+        ConcurrentBag<string> activeClients = [];
+        ParallelOptions parallelOptions = new()
         {
-            return NetworkInterface.GetAllNetworkInterfaces()
-                .Where(inter => inter.OperationalStatus == OperationalStatus.Up)
-                .SelectMany(inter => inter.GetIPProperties().UnicastAddresses)
-                .Where(address => address.Address.AddressFamily == AddressFamily.InterNetwork && address.PrefixLength >= 24)
-                .ToList();
+            MaxDegreeOfParallelism = MaxParallelPings,
+            CancellationToken = cancellationToken
+        };
+
+        try
+        {
+            await Parallel.ForEachAsync(allNetworkClientAddresses, parallelOptions, async (ip, ct) =>
+            {
+                using Ping ping = new();
+                var reply = await ping.SendPingAsync(ip, 250);
+                if (reply.Status == IPStatus.Success)
+                    activeClients.Add(ip.ToString());
+
+                var current = Interlocked.Increment(ref scannedCount);
+                progress?.Report((double)current / totalCount);
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            // Scanning cancelled — return whatever was found so far
         }
 
-        /// <summary>
-        /// Scans all local networks in parallel and returns active IP addresses.
-        /// Reports progress via optional IProgress (value 0.0 to 1.0).
-        /// </summary>
-        public static async Task<string[]> FindAllActiveIpInAllLocalNetworks(
-            IProgress<double> progress = null, CancellationToken cancellationToken = default)
-        {
-            var localIpList = GetLocalIPv4Addresses();
-
-            List<IPAddress> allNetworkClientAddresses = [];
-            foreach (var localIp in localIpList)
-            {
-                string network = localIp.Address + "/" + localIp.PrefixLength;
-                var ipNetwork = IPNetwork2.Parse(network);
-                allNetworkClientAddresses.AddRange(ipNetwork.ListIPAddress(Filter.Usable));
-            }
-
-            int totalCount = allNetworkClientAddresses.Count;
-            if (totalCount == 0)
-                return [];
-
-            int scannedCount = 0;
-            ConcurrentBag<string> activeClients = [];
-            ParallelOptions parallelOptions = new()
-            {
-                MaxDegreeOfParallelism = MaxParallelPings,
-                CancellationToken = cancellationToken
-            };
-
-            try
-            {
-                await Parallel.ForEachAsync(allNetworkClientAddresses, parallelOptions, async (ip, ct) =>
-                {
-                    using Ping ping = new();
-                    PingReply reply = await ping.SendPingAsync(ip, 250);
-                    if (reply.Status == IPStatus.Success)
-                        activeClients.Add(ip.ToString());
-
-                    int current = Interlocked.Increment(ref scannedCount);
-                    progress?.Report((double)current / totalCount);
-                });
-            }
-            catch (OperationCanceledException)
-            {
-                // Scanning cancelled — return whatever was found so far
-            }
-
-            return activeClients.ToArray();
-        }
+        return activeClients.ToArray();
     }
 }

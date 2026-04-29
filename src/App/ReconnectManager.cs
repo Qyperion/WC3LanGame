@@ -1,74 +1,75 @@
 ﻿using Timer = System.Timers.Timer;
 
-namespace WC3LanGame.App
+namespace WC3LanGame.App;
+
+internal record ReconnectScheduledEventArgs(int Attempt, int DelaySeconds);
+
+internal sealed class ReconnectManager : IDisposable
 {
-    internal record ReconnectScheduledEventArgs(int Attempt, int DelaySeconds);
+    private Timer _reconnectTimer;
+    private int _reconnectAttempt;
+    private bool _disposed;
 
-    internal sealed class ReconnectManager : IDisposable
+    public bool IsReconnecting { get; private set; }
+
+    public event EventHandler<ReconnectScheduledEventArgs> ReconnectScheduled;
+    public event EventHandler ReconnectRequested;
+
+    public void Start()
     {
-        private Timer _reconnectTimer;
-        private int _reconnectAttempt;
-        private bool _disposed;
+        if (IsReconnecting) return;
+        IsReconnecting = true;
+        _reconnectAttempt = 0;
+        ScheduleNext();
+    }
 
-        public bool IsReconnecting { get; private set; }
+    public void Stop()
+    {
+        IsReconnecting = false;
+        _reconnectTimer?.Stop();
+        _reconnectTimer?.Dispose();
+        _reconnectTimer = null;
+        _reconnectAttempt = 0;
+    }
 
-        public event EventHandler<ReconnectScheduledEventArgs> ReconnectScheduled;
-        public event EventHandler ReconnectRequested;
+    public void OnReconnectSucceeded()
+    {
+        IsReconnecting = false;
+        _reconnectAttempt = 0;
+    }
 
-        public void Start()
+    public void OnReconnectFailed()
+    {
+        ScheduleNext();
+    }
+
+    private void ScheduleNext()
+    {
+        _reconnectAttempt++;
+        var delaySeconds = Math.Min(5 * _reconnectAttempt, 30);
+
+        ReconnectScheduled?.Invoke(this, new ReconnectScheduledEventArgs(_reconnectAttempt, delaySeconds));
+
+        _reconnectTimer?.Stop();
+        _reconnectTimer?.Dispose();
+        _reconnectTimer = new Timer(delaySeconds * 1000)
         {
-            if (IsReconnecting) return;
-            IsReconnecting = true;
-            _reconnectAttempt = 0;
-            ScheduleNext();
-        }
-
-        public void Stop()
+            AutoReset = false
+        };
+        _reconnectTimer.Elapsed += (_, _) =>
         {
-            IsReconnecting = false;
-            _reconnectTimer?.Stop();
-            _reconnectTimer?.Dispose();
-            _reconnectTimer = null;
-            _reconnectAttempt = 0;
-        }
+            if (_disposed || !IsReconnecting) return;
+            ReconnectRequested?.Invoke(this, EventArgs.Empty);
+        };
+        _reconnectTimer.Start();
+    }
 
-        public void OnReconnectSucceeded()
-        {
-            IsReconnecting = false;
-            _reconnectAttempt = 0;
-        }
-
-        public void OnReconnectFailed()
-        {
-            ScheduleNext();
-        }
-
-        private void ScheduleNext()
-        {
-            _reconnectAttempt++;
-            int delaySeconds = Math.Min(5 * _reconnectAttempt, 30);
-
-            ReconnectScheduled?.Invoke(this, new ReconnectScheduledEventArgs(_reconnectAttempt, delaySeconds));
-
-            _reconnectTimer?.Stop();
-            _reconnectTimer?.Dispose();
-            _reconnectTimer = new Timer(delaySeconds * 1000);
-            _reconnectTimer.AutoReset = false;
-            _reconnectTimer.Elapsed += (_, _) =>
-            {
-                if (_disposed || !IsReconnecting) return;
-                ReconnectRequested?.Invoke(this, EventArgs.Empty);
-            };
-            _reconnectTimer.Start();
-        }
-
-        public void Dispose()
-        {
-            if (_disposed) return;
-            _disposed = true;
-            _reconnectTimer?.Stop();
-            _reconnectTimer?.Dispose();
-            _reconnectTimer = null;
-        }
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _reconnectTimer?.Stop();
+        _reconnectTimer?.Dispose();
+        _reconnectTimer = null;
     }
 }

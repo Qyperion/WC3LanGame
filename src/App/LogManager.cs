@@ -1,65 +1,64 @@
-﻿namespace WC3LanGame.App
+﻿namespace WC3LanGame.App;
+
+internal enum LogLevel { Info, Success, Warning, Error }
+
+internal sealed class LogManager
 {
-    internal enum LogLevel { Info, Success, Warning, Error }
+    private const int MaxLogLines = 500;
 
-    internal sealed class LogManager
+    private readonly RichTextBox _richTextBox;
+    private readonly ToolStripStatusLabel _statusLabel;
+
+    public LogManager(RichTextBox richTextBox, ToolStripStatusLabel statusLabel)
     {
-        private const int MaxLogLines = 500;
+        _richTextBox = richTextBox;
+        _statusLabel = statusLabel;
+    }
 
-        private readonly RichTextBox _richTextBox;
-        private readonly ToolStripStatusLabel _statusLabel;
+    public void Log(string message, LogLevel level = LogLevel.Info)
+    {
+        if (_richTextBox.IsDisposed)
+            return;
 
-        public LogManager(RichTextBox richTextBox, ToolStripStatusLabel statusLabel)
+        var timestamp = DateTime.Now.ToString("HH:mm:ss");
+        var line = $"[{timestamp}] {message}{Environment.NewLine}";
+
+        if (_richTextBox.InvokeRequired)
         {
-            _richTextBox = richTextBox;
-            _statusLabel = statusLabel;
+            _richTextBox.BeginInvoke(() => AppendLog(line, message, level));
+            return;
         }
 
-        public void Log(string message, LogLevel level = LogLevel.Info)
+        AppendLog(line, message, level);
+    }
+
+    private void AppendLog(string line, string statusText, LogLevel level)
+    {
+        if (_richTextBox.IsDisposed)
+            return;
+
+        var palette = ThemePalette.Current;
+
+        if (_richTextBox.Lines.Length > MaxLogLines)
         {
-            if (_richTextBox.IsDisposed)
-                return;
-
-            string timestamp = DateTime.Now.ToString("HH:mm:ss");
-            string line = $"[{timestamp}] {message}{Environment.NewLine}";
-
-            if (_richTextBox.InvokeRequired)
-            {
-                _richTextBox.BeginInvoke(() => AppendLog(line, message, level));
-                return;
-            }
-
-            AppendLog(line, message, level);
+            _richTextBox.SelectAll();
+            _richTextBox.SelectedText = "";
         }
 
-        private void AppendLog(string line, string statusText, LogLevel level)
+        var color = level switch
         {
-            if (_richTextBox.IsDisposed)
-                return;
+            LogLevel.Success => palette.LogSuccess,
+            LogLevel.Warning => palette.LogWarning,
+            LogLevel.Error => palette.LogError,
+            _ => _richTextBox.ForeColor
+        };
 
-            ThemePalette palette = ThemePalette.Current;
+        _richTextBox.SelectionStart = _richTextBox.TextLength;
+        _richTextBox.SelectionLength = 0;
+        _richTextBox.SelectionColor = color;
+        _richTextBox.AppendText(line);
+        _richTextBox.ScrollToCaret();
 
-            if (_richTextBox.Lines.Length > MaxLogLines)
-            {
-                _richTextBox.SelectAll();
-                _richTextBox.SelectedText = "";
-            }
-
-            Color color = level switch
-            {
-                LogLevel.Success => palette.LogSuccess,
-                LogLevel.Warning => palette.LogWarning,
-                LogLevel.Error => palette.LogError,
-                _ => _richTextBox.ForeColor
-            };
-
-            _richTextBox.SelectionStart = _richTextBox.TextLength;
-            _richTextBox.SelectionLength = 0;
-            _richTextBox.SelectionColor = color;
-            _richTextBox.AppendText(line);
-            _richTextBox.ScrollToCaret();
-
-            _statusLabel.Text = statusText;
-        }
+        _statusLabel.Text = statusText;
     }
 }
