@@ -28,11 +28,19 @@ jobs:
 
       - name: Restore
         shell: pwsh
-        run: dotnet restore $env:SOLUTION_PATH -p:SelfContained=false
+        run: dotnet restore $env:APP_PROJECT -p:SelfContained=false
 
       - name: Build
         shell: pwsh
-        run: dotnet build $env:SOLUTION_PATH --configuration Release --no-restore -p:SelfContained=false
+        run: >
+          dotnet build $env:APP_PROJECT
+          --configuration Release
+          --no-restore
+          --disable-build-servers
+          -maxcpucount:1
+          -p:SelfContained=false
+          -p:BuildInParallel=false
+          -p:UseSharedCompilation=false
 
   release:
     name: Release
