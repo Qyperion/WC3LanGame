@@ -5,6 +5,13 @@ using WC3LanGame.Core.Warcraft3.Types;
 
 namespace WC3LanGame.Core;
 
+public enum ThemeMode
+{
+    System,
+    Light,
+    Dark
+}
+
 public class AppSettings
 {
     private static readonly string SettingsDirectory = Path.Combine(
@@ -26,6 +33,7 @@ public class AppSettings
     public WarcraftType? GameType { get; set; }
     public bool AutoReconnect { get; set; }
     public bool LogExpanded { get; set; }
+    public ThemeMode ThemeMode { get; set; } = ThemeMode.System;
 
     public static AppSettings Load()
     {

@@ -1,4 +1,6 @@
-﻿namespace WC3LanGame.App;
+﻿using WC3LanGame.Core;
+
+namespace WC3LanGame.App;
 
 internal sealed class ThemePalette
 {
@@ -38,6 +40,18 @@ internal sealed class ThemePalette
     public Color LogWarning { get; }
     public Color LogError { get; }
     public Color TrayIconBorder { get; }
+
+    public static void ApplyColorMode(ThemeMode themeMode)
+    {
+        var colorMode = themeMode switch
+        {
+            ThemeMode.Light => SystemColorMode.Classic,
+            ThemeMode.Dark => SystemColorMode.Dark,
+            _ => SystemColorMode.System
+        };
+
+        Application.SetColorMode(colorMode);
+    }
 
     private static ThemePalette Dark { get; } = new(
         overlayTint: Color.FromArgb(185, 12, 12, 28),

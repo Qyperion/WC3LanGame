@@ -1,4 +1,6 @@
-﻿namespace WC3LanGame.App;
+﻿using WC3LanGame.Core;
+
+namespace WC3LanGame.App;
 
 internal static class Program
 {
@@ -32,7 +34,8 @@ internal static class Program
         // To customize application configuration such as set high DPI settings or default font,
         // see https://aka.ms/applicationconfiguration.
         ApplicationConfiguration.Initialize();
-        Application.SetColorMode(SystemColorMode.System);
-        Application.Run(new MainForm());
+        var settings = AppSettings.Load();
+        ThemePalette.ApplyColorMode(settings.ThemeMode);
+        Application.Run(new MainForm(settings));
     }
 }

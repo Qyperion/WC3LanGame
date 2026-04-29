@@ -21,6 +21,7 @@ public partial class MainForm : Form
     private readonly AppSettings _settings;
     private readonly LogManager _log;
     private readonly ErrorProvider _hostAddressErrorProvider;
+    private ToolStripDropDownButton _themeToolStripDropDownButton;
 
     private readonly Timer _updateWC3RunningStatusTimer = new(3000);
 
@@ -36,24 +37,36 @@ public partial class MainForm : Form
     private ToolStripMenuItem _trayConnectItem;
     private ToolStripMenuItem _trayWC3Item;
 
-
     public MainForm()
+        : this(LoadSettingsForStartup())
     {
+    }
+
+    internal MainForm(AppSettings settings)
+    {
+        _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         InitializeComponent();
-        ApplyThemeColors();
+        InitThemeSelector();
         _log = new LogManager(logRichTextBox, lastLogStatusLabel);
         _hostAddressErrorProvider = new ErrorProvider(components) { BlinkStyle = ErrorBlinkStyle.NeverBlink };
-        _settings = AppSettings.Load();
         InitSettingsComponent();
         InitTrayIcon();
+        ApplyThemeColors();
 
         _reconnectManager.ReconnectScheduled += ReconnectManager_ReconnectScheduled;
         _reconnectManager.ReconnectRequested += ReconnectManager_ReconnectRequested;
     }
 
+    private static AppSettings LoadSettingsForStartup() => AppSettings.Load();
+
     private void ApplyThemeColors()
     {
         var palette = ThemePalette.Current;
+
+        settingsPanel.BackColor = Color.Transparent;
+        gameInfoPanel.BackColor = Color.Transparent;
+        gameInfoTableLayoutPanel.BackColor = Color.Transparent;
+        autoReconnectCheckBox.BackColor = Color.Transparent;
 
         hostLabel.ForeColor = palette.PrimaryText;
         scanningNetworkLabel.ForeColor = palette.PrimaryText;
@@ -79,10 +92,94 @@ public partial class MainForm : Form
         playersCountValueLabel.ForeColor = palette.PrimaryText;
         clientCountValueLabel.ForeColor = palette.PrimaryText;
 
+        logRichTextBox.ForeColor = palette.PrimaryText;
+
+        lastLogStatusLabel.ForeColor = palette.SecondaryText;
+        showLogToolStripLabel.ForeColor = palette.SecondaryText;
+        showLogToolStripLabel.LinkColor = palette.SecondaryText;
+        showLogToolStripLabel.ActiveLinkColor = palette.PrimaryText;
+        showLogToolStripLabel.VisitedLinkColor = palette.SecondaryText;
+
+        _themeToolStripDropDownButton?.ForeColor = palette.SecondaryText;
+
         connectionStatusLabel.ForeColor = palette.InactiveStatus;
     }
 
     #region Controls
+
+    private void InitThemeSelector()
+    {
+        _themeToolStripDropDownButton = new ToolStripDropDownButton(GetThemeButtonText(_settings.ThemeMode))
+        {
+            Name = "themeToolStripDropDownButton",
+            AutoToolTip = false,
+            DisplayStyle = ToolStripItemDisplayStyle.Text,
+            ToolTipText = "Theme"
+        };
+
+        foreach (var themeMode in Enum.GetValues<ThemeMode>())
+        {
+            var themeToolStripMenuItem = new ToolStripMenuItem(GetThemeModeText(themeMode))
+            {
+                Name = $"theme{themeMode}ToolStripMenuItem",
+                Tag = themeMode,
+                Checked = themeMode == _settings.ThemeMode
+            };
+
+            themeToolStripMenuItem.Click += themeToolStripMenuItem_Click;
+            _themeToolStripDropDownButton.DropDownItems.Add(themeToolStripMenuItem);
+        }
+
+        var insertIndex = Math.Max(statusStrip.Items.Count - 1, 0);
+        statusStrip.Items.Insert(insertIndex, _themeToolStripDropDownButton);
+    }
+
+    private void themeToolStripMenuItem_Click(object sender, EventArgs e)
+    {
+        if (sender is not ToolStripMenuItem { Tag: ThemeMode themeMode })
+            return;
+
+        if (_settings.ThemeMode == themeMode)
+            return;
+
+        _settings.ThemeMode = themeMode;
+        UpdateThemeSelectorState();
+        UpdateSettingsFromControls();
+        _settings.Save();
+        MessageBox.Show(
+            this,
+            "Theme saved. Restart the app to apply it.",
+            "Restart required",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Warning);
+    }
+
+    private void UpdateThemeSelectorState()
+    {
+        _themeToolStripDropDownButton.Text = GetThemeButtonText(_settings.ThemeMode);
+
+        foreach (ToolStripItem item in _themeToolStripDropDownButton.DropDownItems)
+        {
+            if (item is ToolStripMenuItem { Tag: ThemeMode themeMode } themeToolStripMenuItem)
+                themeToolStripMenuItem.Checked = themeMode == _settings.ThemeMode;
+        }
+    }
+
+    private static string GetThemeButtonText(ThemeMode themeMode)
+    {
+        return $"Theme: {GetThemeModeText(themeMode)}";
+    }
+
+    private static string GetThemeModeText(ThemeMode themeMode)
+    {
+        return themeMode switch
+        {
+            ThemeMode.Light => "Light",
+            ThemeMode.Dark => "Dark",
+            _ => "System"
+        };
+    }
+
     private void InitSettingsComponent()
     {
         wc3VersionComboBox.Format += (_, e) =>
@@ -263,11 +360,7 @@ public partial class MainForm : Form
 
     private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
     {
-        _settings.HostAddress = hostAddressComboBox.Text;
-        _settings.Version = wc3VersionComboBox.SelectedItem as WarcraftVersion?;
-        _settings.GameType = gameTypeComboBox.SelectedItem as WarcraftType?;
-        _settings.AutoReconnect = autoReconnectCheckBox.Checked;
-        _settings.LogExpanded = logPanel.Visible;
+        UpdateSettingsFromControls();
         _settings.Save();
 
         _scanCts?.Cancel();
@@ -277,6 +370,15 @@ public partial class MainForm : Form
         _updateWC3RunningStatusTimer.Dispose();
         _currentStatusIcon?.Dispose();
         _trayContextMenu?.Dispose();
+    }
+
+    private void UpdateSettingsFromControls()
+    {
+        _settings.HostAddress = hostAddressComboBox.Text;
+        _settings.Version = wc3VersionComboBox.SelectedItem as WarcraftVersion?;
+        _settings.GameType = gameTypeComboBox.SelectedItem as WarcraftType?;
+        _settings.AutoReconnect = autoReconnectCheckBox.Checked;
+        _settings.LogExpanded = logPanel.Visible;
     }
 
     private void notifyIcon_MouseDoubleClick(object sender, MouseEventArgs e)
@@ -460,7 +562,9 @@ public partial class MainForm : Form
     {
         connectionStatusLabel.Text = text;
         connectionStatusLabel.ForeColor = color;
-        UpdateTrayIconStatus(color == ThemePalette.Current.InactiveStatus ? Color.Empty : color);
+
+        if (_originalTrayIcon != null)
+            UpdateTrayIconStatus(color == ThemePalette.Current.InactiveStatus ? Color.Empty : color);
     }
 
     private void UpdateTrayText()
@@ -481,7 +585,6 @@ public partial class MainForm : Form
     /// <returns>true if proxy started successfully</returns>
     private bool RunProxy(HostInfo hostInfo)
     {
-        var palette = ThemePalette.Current;
         _proxyService = new ProxyService();
 
         try
@@ -530,7 +633,7 @@ public partial class MainForm : Form
         wc3VersionComboBox.Enabled = false;
         gameTypeComboBox.Enabled = false;
         rescanButton.Enabled = false;
-        UpdateConnectionStatus("\u25CF Searching for game...", palette.StatusAttention);
+        UpdateConnectionStatus("\u25CF Searching for game...", ThemePalette.Current.StatusAttention);
         UpdateTrayText();
         return true;
     }
